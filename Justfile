@@ -4,7 +4,7 @@ render-all: render-lab
 # Render lab environment
 render-lab:
     rm -rf manifests/lab/*
-    tk export manifests/lab/ environments/lab --format '{{ "{{" }}.metadata.name{{ "}}" }}-{{ "{{" }}.kind | lower{{ "}}" }}'
+    tk export manifests/lab/ environments/lab --format '{{ "{{" }}.metadata.name{{ "}}" }}-{{ "{{" }}.kind | lower{{ "}}" }}' --skip-manifest
 
 # Initialize jsonnet-bundler dependencies
 jb-install:
