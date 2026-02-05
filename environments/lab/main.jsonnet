@@ -41,4 +41,29 @@ local withNamespace(resources, ns) = {
       'nfs-provisioner'
     ),
   },
+
+  // Test app to verify NFS provisioning
+  storageTest: {
+    local ns = 'storage-test',
+
+    namespace: k.core.v1.namespace.new(ns),
+
+    pvc: k.core.v1.persistentVolumeClaim.new('test-pvc')
+      + k.core.v1.persistentVolumeClaim.metadata.withNamespace(ns)
+      + k.core.v1.persistentVolumeClaim.spec.withAccessModes(['ReadWriteMany'])
+      + k.core.v1.persistentVolumeClaim.spec.resources.withRequests({ storage: '100Mi' }),
+
+    pod: k.core.v1.pod.new('storage-test')
+      + k.core.v1.pod.metadata.withNamespace(ns)
+      + k.core.v1.pod.spec.withContainers([
+        k.core.v1.container.new('busybox', 'busybox')
+        + k.core.v1.container.withCommand(['/bin/sh', '-c', 'echo "Written at $(date)" >> /data/test.txt && cat /data/test.txt && sleep 3600'])
+        + k.core.v1.container.withVolumeMounts([
+          k.core.v1.volumeMount.new('data', '/data'),
+        ]),
+      ])
+      + k.core.v1.pod.spec.withVolumes([
+        k.core.v1.volume.fromPersistentVolumeClaim('data', 'test-pvc'),
+      ]),
+  },
 }
