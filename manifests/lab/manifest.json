@@ -1,0 +1,10 @@
+{
+    "leader-locking-nfs-provisioner-nfs-subdir-external-provisioner-role.yaml": "environments/lab/main.jsonnet",
+    "leader-locking-nfs-provisioner-nfs-subdir-external-provisioner-rolebinding.yaml": "environments/lab/main.jsonnet",
+    "nfs-provisioner-namespace.yaml": "environments/lab/main.jsonnet",
+    "nfs-provisioner-nfs-subdir-external-provisioner-deployment.yaml": "environments/lab/main.jsonnet",
+    "nfs-provisioner-nfs-subdir-external-provisioner-runner-clusterrole.yaml": "environments/lab/main.jsonnet",
+    "nfs-provisioner-nfs-subdir-external-provisioner-serviceaccount.yaml": "environments/lab/main.jsonnet",
+    "nfs-storageclass.yaml": "environments/lab/main.jsonnet",
+    "run-nfs-provisioner-nfs-subdir-external-provisioner-clusterrolebinding.yaml": "environments/lab/main.jsonnet"
+}
