@@ -2,22 +2,43 @@ local config = import '../../lib/config.libsonnet';
 local helm = (import 'tanka-util/helm.libsonnet').new(std.thisFile);
 local k = import 'k8s-libsonnet/main.libsonnet';
 
+// Cluster-scoped kinds that should not have namespace set
+local clusterScoped = [
+  'ClusterRole',
+  'ClusterRoleBinding',
+  'StorageClass',
+  'Namespace',
+];
+
+// Add namespace to all namespaced resources
+local withNamespace(resources, ns) = {
+  [key]: resources[key] + (
+    if std.member(clusterScoped, resources[key].kind)
+    then {}
+    else { metadata+: { namespace: ns } }
+  )
+  for key in std.objectFields(resources)
+};
+
 {
   nfsProvisioner: {
     namespace: k.core.v1.namespace.new('nfs-provisioner'),
 
-    resources: helm.template('nfs-provisioner', '../../charts/nfs-subdir-external-provisioner', {
-      namespace: 'nfs-provisioner',
-      values: {
-        nfs: {
-          server: config.nasIP,
-          path: '/pool-1/k8s',
+    resources: withNamespace(
+      helm.template('nfs-provisioner', '../../charts/nfs-subdir-external-provisioner', {
+        namespace: 'nfs-provisioner',
+        values: {
+          nfs: {
+            server: config.nasIP,
+            path: '/pool-1/k8s',
+          },
+          storageClass: {
+            name: 'nfs',
+            defaultClass: true,
+          },
         },
-        storageClass: {
-          name: 'nfs',
-          defaultClass: true,
-        },
-      },
-    }),
+      }),
+      'nfs-provisioner'
+    ),
   },
 }
