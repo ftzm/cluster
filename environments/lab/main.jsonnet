@@ -236,6 +236,9 @@ local withNamespace(resources, ns) = {
             prune: false,  // Don't auto-delete resources not in Git (safer)
             selfHeal: true,  // Auto-sync when cluster state drifts
           },
+          syncOptions: [
+            'ServerSideApply=true',
+          ],
         },
       },
     },
