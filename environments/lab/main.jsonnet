@@ -207,6 +207,11 @@ local withNamespace(resources, ns) = {
             install: true,
             keep: true,
           },
+          // Only needed for initial install to create redis secret.
+          // Keep disabled because it causes problems during syncs.
+          redisSecretInit: {
+            enabled: false,
+          },
         },
       }),
       ns
