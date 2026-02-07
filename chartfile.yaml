@@ -4,9 +4,13 @@ repositories:
     url: https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner/
   - name: traefik
     url: https://traefik.github.io/charts
+  - name: argo
+    url: https://argoproj.github.io/argo-helm
 
 requires:
   - chart: nfs-subdir-external-provisioner/nfs-subdir-external-provisioner
     version: "4.0.18"
   - chart: traefik/traefik
     version: "34.3.0"
+  - chart: argo/argo-cd
+    version: "9.4.1"

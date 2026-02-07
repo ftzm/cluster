@@ -191,4 +191,53 @@ local withNamespace(resources, ns) = {
       ns
     ),
   },
+
+  // ArgoCD - GitOps continuous delivery
+  argocd: {
+    local ns = 'argocd',
+
+    namespace: k.core.v1.namespace.new(ns),
+
+    resources: withNamespace(
+      helm.template('argocd', '../../charts/argo-cd', {
+        namespace: ns,
+        values: {
+          // Use existing CRDs if already installed
+          crds: {
+            install: true,
+            keep: true,
+          },
+        },
+      }),
+      ns
+    ),
+
+    // Application that points ArgoCD at this repo's rendered manifests
+    app: {
+      apiVersion: 'argoproj.io/v1alpha1',
+      kind: 'Application',
+      metadata: {
+        name: 'lab',
+        namespace: ns,
+      },
+      spec: {
+        project: 'default',
+        source: {
+          repoURL: 'https://github.com/ftzm/cluster.git',
+          targetRevision: 'HEAD',
+          path: 'manifests/lab',
+        },
+        destination: {
+          server: 'https://kubernetes.default.svc',
+          namespace: 'default',
+        },
+        syncPolicy: {
+          automated: {
+            prune: false,  // Don't auto-delete resources not in Git (safer)
+            selfHeal: true,  // Auto-sync when cluster state drifts
+          },
+        },
+      },
+    },
+  },
 }
