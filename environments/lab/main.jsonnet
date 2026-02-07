@@ -8,6 +8,9 @@ local clusterScoped = [
   'ClusterRoleBinding',
   'StorageClass',
   'Namespace',
+  'IngressClass',
+  'CustomResourceDefinition',
+  'GatewayClass',
 ];
 
 // Add namespace to all namespaced resources
@@ -65,5 +68,127 @@ local withNamespace(resources, ns) = {
       + k.core.v1.pod.spec.withVolumes([
         k.core.v1.volume.fromPersistentVolumeClaim('data', 'test-pvc'),
       ]),
+  },
+
+  // Hello world to test internal ingress
+  helloWorld: {
+    local ns = 'hello-world',
+    local labels = { app: 'hello' },
+
+    namespace: k.core.v1.namespace.new(ns),
+
+    deployment: k.apps.v1.deployment.new('hello')
+    + k.apps.v1.deployment.metadata.withNamespace(ns)
+    + k.apps.v1.deployment.spec.withReplicas(1)
+    + k.apps.v1.deployment.spec.selector.withMatchLabels(labels)
+    + k.apps.v1.deployment.spec.template.metadata.withLabels(labels)
+    + k.apps.v1.deployment.spec.template.spec.withContainers([
+      k.core.v1.container.new('nginx', 'nginx:alpine')
+      + k.core.v1.container.withPorts([
+        k.core.v1.containerPort.newNamed(80, 'http'),
+      ]),
+    ]),
+
+    service: k.core.v1.service.new('hello', labels, [
+      k.core.v1.servicePort.new(80, 80),
+    ])
+    + k.core.v1.service.metadata.withNamespace(ns),
+
+    // IngressRoute for private-only access (WireGuard only)
+    // To make this public too, add 'web' and 'websecure' to entryPoints
+    ingressRoute: {
+      apiVersion: 'traefik.io/v1alpha1',
+      kind: 'IngressRoute',
+      metadata: {
+        name: 'hello',
+        namespace: ns,
+      },
+      spec: {
+        entryPoints: ['privateweb', 'privatesecure'],
+        routes: [
+          {
+            match: "Host(`hello.ftzmlab.xyz`)",
+            kind: 'Rule',
+            services: [
+              {
+                name: 'hello',
+                port: 80,
+              },
+            ],
+          },
+        ],
+      },
+    },
+  },
+
+  // Traefik ingress controller with dual entrypoints
+  // - Public entrypoints (web, websecure) bind to LAN IP
+  // - Private entrypoints (privateweb, privatesecure) bind to WireGuard IP
+  traefik: {
+    local ns = 'traefik',
+
+    namespace: k.core.v1.namespace.new(ns),
+
+    resources: withNamespace(
+      helm.template('traefik', '../../charts/traefik', {
+        namespace: ns,
+        values: {
+          // Use host network to bind directly to specific IPs
+          hostNetwork: true,
+
+          deployment: {
+            // Required when using hostNetwork to resolve cluster DNS
+            dnsPolicy: 'ClusterFirstWithHostNet',
+          },
+
+          // Ensure Traefik runs on the node with both IPs (public + WireGuard)
+          nodeSelector: {
+            'kubernetes.io/hostname': 'nuc',
+          },
+
+
+          // Disable LoadBalancer service - we bind directly via hostNetwork
+          service: {
+            enabled: false,
+          },
+
+          // Disable default ports exposure (we use hostNetwork)
+          ports: {
+            web: {
+              expose: { default: false },
+            },
+            websecure: {
+              expose: { default: false },
+            },
+            traefik: {
+              expose: { default: false },
+            },
+            metrics: {
+              expose: { default: false },
+            },
+          },
+
+          // Define entrypoints with specific IP bindings
+          // Using non-privileged ports since nginx handles 80/443 on the host
+          additionalArguments: [
+            // Public entrypoints (bind to LAN IP)
+            '--entrypoints.web.address=' + config.publicIP + ':9080',
+            '--entrypoints.websecure.address=' + config.publicIP + ':9443',
+            // Private entrypoints (bind to WireGuard IP)
+            '--entrypoints.privateweb.address=' + config.wireguardIP + ':9080',
+            '--entrypoints.privatesecure.address=' + config.wireguardIP + ':9443',
+          ],
+
+          // Single IngressClass for standard Ingress resources
+          // Note: Standard Ingress resources will be available on ALL entrypoints.
+          // Use IngressRoute CRD with entryPoints field for private-only services.
+          ingressClass: {
+            enabled: true,
+            isDefaultClass: true,
+          },
+        },
+      }),
+      ns
+    ),
   },
 }
