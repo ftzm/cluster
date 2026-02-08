@@ -1,5 +1,1878 @@
 # Change Log
 
+## 39.0.0  ![AppVersion: v3.6.7](https://img.shields.io/static/v1?label=AppVersion&message=v3.6.7&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2026-01-22
+
+* fix(security)!: add support for request path options of Traefik 3.6.7+
+* fix(ports)!: 🐛 entrypoints `http` options
+* feat(gateway-api): add support for defaultScope experimental feature
+* feat(deps)!: update traefik docker tag to v3.6.7
+* feat(chart): enforce schema
+* feat(CRDs)!: support Traefik Hub v3.19.0
+* docs(values): avoid unbreakable lines in table output of VALUES.md
+* chore(release): 🚀 publish traefik 39.0.0 and crds 1.14.0
+* refactor(chart): clean output on Deployment & Daemonset
+
+**Upgrade Notes**
+
+There are 3 breaking changes in this release:
+
+1. **Traefik Hub**: This release support **only** Traefik Hub v3.19.0+ versions.
+   * CRDs has to be upgraded **before** the Chart. See [UPGRADING](https://github.com/traefik/traefik-helm-chart?tab=readme-ov-file#upgrading) instructions.
+   * It's possible to use previous versions of the Chart for previous versions of Traefik Hub.
+2. **Encoded Characters**: Allowed by default in Traefik v3.6.7+ ([opt-in security options](https://github.com/traefik/traefik-helm-chart/blob/master/traefik/values.yaml#L913), [documentation](https://doc.traefik.io/traefik/security/request-path/#encoded-character-filtering))
+3. **Ports Configuration**: HTTP options now require explicit `http` nesting level with PR https://github.com/traefik/traefik-helm-chart/pull/1603.
+   * There is a _before_ / _after_ example in the PR description.
+
+:information_source: Schema validation has been enforced in this release. When it fails, it means that the parameter is not implemented.
+
+### Default value changes
+
+```diff
+diff --git a/traefik/values.yaml b/traefik/values.yaml
+index 66a7f22..a8aec47 100644
+--- a/traefik/values.yaml
++++ b/traefik/values.yaml
+@@ -107,13 +107,14 @@ deployment:
+   goMemLimitPercentage: 0.9
+ 
+ # -- [Pod Disruption Budget](https://kubernetes.io/docs/reference/kubernetes-api/policy-resources/pod-disruption-budget-v1/)
++# @default -- See _values.yaml_
+ podDisruptionBudget:  # @schema additionalProperties: false
+   enabled: false
+   maxUnavailable:  # @schema type:[string, integer, null];minimum:0
+   minAvailable:    # @schema type:[string, integer, null];minimum:0
+ 
+-# -- Create a default IngressClass for Traefik
+ ingressClass:  # @schema additionalProperties: false
++  # -- Create a default IngressClass for Traefik
+   enabled: true
+   isDefaultClass: true
+   name: ""
+@@ -155,7 +156,9 @@ gateway:
+   annotations: {}
+   # -- [Infrastructure](https://kubernetes.io/blog/2023/11/28/gateway-api-ga/#gateway-infrastructure-labels)
+   infrastructure: {}
+-  # -- Define listeners
++  # -- Configure this Gateway as a [Default Gateway](https://kubernetes.io/blog/2025/11/06/gateway-api-v1-4/#introducing-default-gateways)
++  # by setting the `defaultScope` field (e.g. `All` or `Namespace`).
++  defaultScope: null  # @schema enum:["All", "None", null]; type:[string, null]; default: null
+   listeners:
+     web:
+       # -- Port is the network port. Multiple listeners may use the same port, subject to the Listener compatibility rules.
+@@ -198,7 +201,9 @@ api:
+   # -- Configure API basePath
+   basePath: ""  # @schema type:[string, null]; default: "/"
+ 
+-# -- Only dashboard & healthcheck IngressRoute are supported. It's recommended to create workloads CR outside of this Chart.
++# -- Only dashboard & healthcheck IngressRoute are supported.
++# It's recommended to create workloads CR outside of this Chart.
++# @default -- See _values.yaml_
+ ingressRoute:
+   dashboard:
+     # -- Create an IngressRoute for the dashboard
+@@ -210,6 +215,7 @@ ingressRoute:
+     # -- The router match rule used for the dashboard ingressRoute
+     matchRule: PathPrefix(`/dashboard`) || PathPrefix(`/api`)
+     # -- The internal service used for the dashboard ingressRoute
++    # @default -- api@internal
+     services:
+       - name: api@internal
+         kind: TraefikService
+@@ -231,6 +237,7 @@ ingressRoute:
+     # -- The router match rule used for the healthcheck ingressRoute
+     matchRule: PathPrefix(`/ping`)
+     # -- The internal service used for the healthcheck ingressRoute
++    # @default -- ping@internal
+     services:
+       - name: ping@internal
+         kind: TraefikService
+@@ -342,8 +349,8 @@ providers:
+       ip: ""
+       # -- This Hostname will get copied to the Gateway status.addresses.
+       hostname: ""
+-      # -- The Kubernetes service to copy status addresses from. When using third parties tools like External-DNS, this option can be used to copy the service loadbalancer.status (containing the service's endpoints IPs) to the gateways. Default to Service of this Chart.
+       service:
++        # -- The Kubernetes service to copy status addresses from. When using third parties tools like External-DNS, this option can be used to copy the service loadbalancer.status (containing the service's endpoints IPs) to the gateways. Default to Service of this Chart.
+         enabled: true
+         name: ""
+         namespace: ""
+@@ -373,8 +380,8 @@ providers:
+     watchNamespace: ""
+     # -- Select namespaces the controller watches for updates to Kubernetes objects. Mutually exclusive with watchNamespace.
+     watchNamespaceSelector: ""
+-    # -- Service fronting the Ingress controller. Takes the form 'namespace/name'
+     publishService:
++      # -- Service fronting the Ingress controller. Takes the form 'namespace/name'
+       enabled: false
+       pathOverride: ""
+     # -- Customized address (or addresses, separated by comma) to set as the load-balancer status of Ingress objects this controller satisfies
+@@ -486,6 +493,7 @@ logs:
+     # -- Set [timezone](https://doc.traefik.io/traefik/observability/access-logs/#time-zones)
+     timezone: ""
+     # -- Set [filtering](https://docs.traefik.io/observability/access-logs/#filtering)
++    # @default -- See below
+     filters:  # @schema additionalProperties: false
+       # -- Set statusCodes, to limit the access logs to requests with a status codes in the specified range
+       statuscodes: ""
+@@ -501,9 +509,8 @@ logs:
+         defaultmode: keep  # @schema enum:[keep, drop, redact]; default: keep
+         # -- Names of the fields to limit.
+         names: {}
+-      # -- [Limit logged fields or headers](https://doc.traefik.io/traefik/observability/access-logs/#limiting-the-fieldsincluding-headers)
+       headers:
+-        # -- Set default mode for fields.headers
++        # -- [Limit logged fields or headers](https://doc.traefik.io/traefik/observability/access-logs/#limiting-the-fieldsincluding-headers)
+         defaultmode: drop  # @schema enum:[keep, drop, redact]; default: drop
+         names: {}
+     otlp:
+@@ -708,6 +715,7 @@ ocsp:
+ 
+ ## Tracing
+ # -- https://doc.traefik.io/traefik/observability/tracing/overview/
++# @default -- See _values.yaml_
+ tracing:  # @schema additionalProperties: false
+   # -- Enables tracing for internal resources. Default: false.
+   addInternals: false
+@@ -768,8 +776,8 @@ global:
+   sendAnonymousUsage: false
+   # -- Required for Azure Marketplace integration.
+   # See https://learn.microsoft.com/en-us/partner-center/marketplace-offers/azure-container-technical-assets-kubernetes?tabs=linux,linux2#update-the-helm-chart
++  # @default -- See _values.yaml_
+   azure:
+-    # -- Enable specific values for Azure Marketplace
+     enabled: false
+     images:
+       proxy:
+@@ -789,7 +797,6 @@ additionalArguments: []
+ #  - "--log.level=DEBUG"
+ 
+ # -- Additional Environment variables to be passed to Traefik's binary
+-# @default -- See _values.yaml_
+ env: []
+ 
+ # -- Environment variables to be passed to Traefik's binary from configMaps or secrets
+@@ -844,12 +851,13 @@ ports:
+     protocol: TCP
+     # -- See [upstream documentation](https://kubernetes.io/docs/concepts/services-networking/service/#type-nodeport)
+     nodePort:  # @schema type:[integer, null]; minimum:0
+-    redirections:
+-      # -- Port Redirections
+-      # Added in 2.2, one can make permanent redirects via entrypoints.
+-      # Same sets of parameters: to, scheme, permanent and priority.
+-      # https://docs.traefik.io/routing/entrypoints/#redirection
+-      entryPoint: {}
++    http:
++      redirections:
++        # -- Port Redirections
++        # Added in 2.2, one can make permanent redirects via entrypoints.
++        # Same sets of parameters: to, scheme, permanent and priority.
++        # https://doc.traefik.io/traefik/reference/install-configuration/entrypoints/#configuration-example
++        entryPoint: {}
+     forwardedHeaders:
+       # -- Trust forwarded headers information (X-Forwarded-*).
+       trustedIPs: []
+@@ -860,6 +868,7 @@ ports:
+       insecure: false
+     # -- Set transport settings for the entrypoint; see also
+     # https://doc.traefik.io/traefik/routing/entrypoints/#transport
++    # @default -- nil
+     transport:
+       respondingTimeouts:
+         readTimeout:   # @schema type:[string, integer, null]
+@@ -900,18 +909,28 @@ ports:
+     allowACMEByPass: false
+     http:
+       # -- See [upstream documentation](https://doc.traefik.io/traefik/security/request-path/#encoded-character-filtering)
+-      encodedCharacters:
+-        allowEncodedSlash: false
+-        allowEncodedBackSlash: false
+-        allowEncodedNullCharacter: false
+-        allowEncodedSemicolon: false
+-        allowEncodedPercent: false
+-        allowEncodedQuestionMark: false
+-        allowEncodedHash: false
++      # @default -- nil
++      encodedCharacters:  # @schema additionalProperties: false
++        allowEncodedSlash:  # @schema type:[boolean, null]
++        allowEncodedBackSlash:  # @schema type:[boolean, null]
++        allowEncodedNullCharacter:  # @schema type:[boolean, null]
++        allowEncodedSemicolon:  # @schema type:[boolean, null]
++        allowEncodedPercent:  # @schema type:[boolean, null]
++        allowEncodedQuestionMark:  # @schema type:[boolean, null]
++        allowEncodedHash:  # @schema type:[boolean, null]
+       # -- Maximum size of request headers in bytes. Default: 1048576 (1 MB)
+       maxHeaderBytes:  # @schema type:[integer, null]; minimum:0
++      # -- See [upstream documentation](https://doc.traefik.io/traefik/reference/install-configuration/entrypoints/#httpmiddlewares)
++      middlewares: []  # @schema type: [array, null]
+       # -- See [upstream documentation](https://doc.traefik.io/traefik/security/request-path/#path-sanitization)
+       sanitizePath:  # @schema type:[boolean, null]
++      tls:
++        # -- See [upstream documentation](https://doc.traefik.io/traefik/reference/install-configuration/entrypoints/#opt-http-tls)
++        # @default -- true
++        enabled: true
++        options: ""
++        certResolver: ""
++        domains: []
+     http3:
+       ## -- Enable HTTP/3 on the entrypoint
+       ## Enabling it will also enable http3 experimental feature
+@@ -930,6 +949,7 @@ ports:
+       trustedIPs: []
+       insecure: false
+     # -- See [upstream documentation](https://doc.traefik.io/traefik/routing/entrypoints/#transport)
++    # @default -- nil
+     transport:
+       respondingTimeouts:
+         readTimeout:   # @schema type:[string, integer, null]
+@@ -940,20 +960,6 @@ ports:
+         graceTimeOut:               # @schema type:[string, integer, null]
+       keepAliveMaxRequests:         # @schema type:[integer, null]; minimum:0
+       keepAliveMaxTime:             # @schema type:[string, integer, null]
+-    # --  See [upstream documentation](https://doc.traefik.io/traefik/routing/entrypoints/#tls)
+-    tls:
+-      enabled: true
+-      options: ""
+-      certResolver: ""
+-      domains: []
+-    # -- One can apply Middlewares on an entrypoint
+-    # https://doc.traefik.io/traefik/middlewares/overview/
+-    # https://doc.traefik.io/traefik/routing/entrypoints/#middlewares
+-    # -- /!\ It introduces here a link between your static configuration and your dynamic configuration /!\
+-    # It follows the provider naming convention: https://doc.traefik.io/traefik/providers/overview/#provider-namespace
+-    #   - namespace-name1@kubernetescrd
+-    #   - namespace-name2@kubernetescrd
+-    middlewares: []  # @schema type: [array, null]
+     observability:  # @schema additionalProperties: false
+       # -- Enables metrics for this entryPoint.
+       metrics:  # @schema type:[boolean, null]; default: true
+@@ -1054,6 +1060,7 @@ autoscaling:  # @schema additionalProperties: false
+   # -- behavior configures the scaling behavior of the target in both Up and Down directions (scaleUp and scaleDown fields respectively).
+   behavior: {}
+   # -- scaleTargetRef points to the target resource to scale, and is used for the pods for which metrics should be collected, as well as to actually change the replica count.
++  # @default -- Traefik Deployment
+   scaleTargetRef:
+     apiVersion: apps/v1
+     kind: Deployment
+@@ -1086,8 +1093,8 @@ certificatesResolvers: {}
+ # affinity is left as default.
+ hostNetwork: false
+ 
+-# -- Whether Role Based Access Control objects like roles and rolebindings should be created
+ rbac:  # @schema additionalProperties: false
++  # -- Whether Role Based Access Control objects like roles and rolebindings should be created
+   enabled: true
+   # When set to true:
+   # 1. It switches respectively the use of `ClusterRole` and `ClusterRoleBinding` to `Role` and `RoleBinding`.
+@@ -1342,9 +1349,10 @@ hub:
+   sendlogs:  # @schema type:[boolean, null]
+ 
+   tracing:
+-    # -- Tracing headers to duplicate.
+-    # To configure the following, tracing.otlp.enabled needs to be set to true.
+     additionalTraceHeaders:
++      # -- Tracing headers to duplicate.
++      # To configure the following, tracing.otlp.enabled needs to be set to true.
++      # @default -- See below
+       enabled: false
+       traceContext:
+         # -- Name of the header that will contain the parent-id header copy.
+@@ -1362,10 +1370,11 @@ hub:
+ 
+ # -- Required for OCI Marketplace integration.
+ # See https://docs.public.content.oci.oraclecloud.com/en-us/iaas/Content/Marketplace/understanding-helm-charts.htm
++# @default -- See _values.yaml_
+ oci_meta:
+   # -- Enable specific values for Oracle Cloud Infrastructure
+   enabled: false
+-    # -- It needs to be an ocir repo
++  # -- It needs to be an ocir repo
+   repo: traefik
+   images:
+     proxy:
+```
+
+## 38.0.2  ![AppVersion: v3.6.6](https://img.shields.io/static/v1?label=AppVersion&message=v3.6.6&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2026-01-08
+
+* revert(CRDs): use Traefik Hub v3.18.0 compatible crds
+* fix(security): set the seccomp profile to RuntimeDefault
+* fix(CRDs): enforce the fact that this Chart does not support Traefik Hub v3.19.0
+* feat(deps): update traefik docker tag to v3.6.6
+* chore(release): publish traefik 38.0.2 and crds 1.13.1
+
+**Upgrades Notes**
+
+There is a breaking change on CRDs between Traefik Hub v3.18.0 and inferior and the CRDs of Traefik Hub v3.19.0+ preview versions (ea & rc).
+With this release, we remove the CRDs of Traefik Hub v3.19.0 preview versions.
+
+When Traefik Hub v3.19.0 is GA, we will release a new major version of this Chart that will only accept Traefik Hub v3.19.0+ versions.
+
+### Default value changes
+
+```diff
+diff --git a/traefik/values.yaml b/traefik/values.yaml
+index f2a9f10..66a7f22 100644
+--- a/traefik/values.yaml
++++ b/traefik/values.yaml
+@@ -1163,6 +1163,8 @@ podSecurityContext:
+   runAsGroup: 65532
+   runAsNonRoot: true
+   runAsUser: 65532
++  seccompProfile:
++    type: RuntimeDefault
+ 
+ #
+ # -- Extra objects to deploy (value evaluated as a template)
+```
+
+## 38.0.1  ![AppVersion: v3.6.5](https://img.shields.io/static/v1?label=AppVersion&message=v3.6.5&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-12-19
+
+* fix(ports): 🐛 add missing `http.maxHeaderBytes` option
+* fix(ports): 🐛 `http.encodedCharacters` on custom entrypoints
+* chore(release): 🚀 publish traefik 38.0.1
+
+### Default value changes
+
+```diff
+diff --git a/traefik/values.yaml b/traefik/values.yaml
+index 0ccdbae..f2a9f10 100644
+--- a/traefik/values.yaml
++++ b/traefik/values.yaml
+@@ -908,6 +908,8 @@ ports:
+         allowEncodedPercent: false
+         allowEncodedQuestionMark: false
+         allowEncodedHash: false
++      # -- Maximum size of request headers in bytes. Default: 1048576 (1 MB)
++      maxHeaderBytes:  # @schema type:[integer, null]; minimum:0
+       # -- See [upstream documentation](https://doc.traefik.io/traefik/security/request-path/#path-sanitization)
+       sanitizePath:  # @schema type:[boolean, null]
+     http3:
+```
+
+## 38.0.0  ![AppVersion: v3.6.5](https://img.shields.io/static/v1?label=AppVersion&message=v3.6.5&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-12-17
+
+* fix: update error message for maxUnavailable validation
+* fix(pvc): allow empty storageClassName
+* fix(providers)!: align labelSelector for kubernetesGateway and knative
+* fix(providers): ✨ enforce schema for all providers
+* fix(notes): minor typo
+* fix(nginx)!: 🐛 align provider settings and provide required rbac
+* feat(security): ✨ 🔒️ add support for request path options of traefik 3.6.4+
+* feat(providers): ✨ enforce schema
+* feat(ports): enforce schema
+* feat(deps): update traefik docker tag to v3.6.5
+* feat(deps): update traefik docker tag to v3.6.4
+* feat(CRDs): update Traefik Hub to v1.24.2
+* feat(CRDs): update Traefik Hub to v1.24.1, with required RBACs
+* chore(release): 🚀 publish traefik 38.0.0 and crds 1.13.0
+
+**Upgrades Notes**
+
+There are two breaking changes in this release:
+
+1. Traefik Proxy v3.6.4+ contains a security fix that is also a breaking change. See [upstream documentation](https://doc.traefik.io/traefik/v3.6/migrate/v3/#v364) for more details.
+2. PR https://github.com/traefik/traefik-helm-chart/pull/1596 align _kubernetesIngressNginx_ provider setting with upstream. There is a _before_ / _after_ example in the PR description
+
+If you need to restore Traefik behavior of v3.6.3 or inferior, it can be set with values.
+
+Here is an example on _websecure_ entrypoint:
+
+```yaml
+ports:
+  websecure:
+    http:
+      encodedCharacters:
+        allowEncodedSlash: true
+        allowEncodedBackSlash: true
+        allowEncodedNullCharacter: true
+        allowEncodedSemicolon: true
+        allowEncodedPercent: true
+        allowEncodedQuestionMark: true
+        allowEncodedHash: true
+      sanitizePath: false
+```
+
+This is not recommended, it may expose you to [GHSA-gm3x-23wp-hc2c](https://github.com/traefik/traefik/security/advisories/GHSA-gm3x-23wp-hc2c).
+
+### Default value changes
+
+```diff
+diff --git a/traefik/values.yaml b/traefik/values.yaml
+index bc4c5da..0ccdbae 100644
+--- a/traefik/values.yaml
++++ b/traefik/values.yaml
+@@ -275,7 +275,9 @@ livenessProbe:  # @schema additionalProperties: false
+ # -- Define [Startup Probe](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/#define-startup-probes)
+ startupProbe: {}
+ 
+-providers:  # @schema additionalProperties: false
++# @schema additionalProperties: false
++providers:
++  # @schema additionalProperties: false
+   kubernetesCRD:
+     # -- Load Kubernetes IngressRoute provider
+     enabled: true
+@@ -287,12 +289,14 @@ providers:  # @schema additionalProperties: false
+     allowEmptyServices: true
+     # -- When the parameter is set, only resources containing an annotation with the same value are processed. Otherwise, resources missing the annotation, having an empty value, or the value traefik are processed. It will also set required annotation on Dashboard and Healthcheck IngressRoute when enabled.
+     ingressClass: ""
+-    # labelSelector: environment=production,method=traefik
++    # -- See [upstream documentation](https://doc.traefik.io/traefik/reference/install-configuration/providers/kubernetes/kubernetes-ingress/#opt-providers-kubernetesIngress-labelselector)
++    labelSelector: ""
+     # -- Array of namespaces to watch. If left empty, Traefik watches all namespaces. . When using `rbac.namespaced`, it will watch helm release namespace and namespaces listed in this array.
+     namespaces: []
+     # -- Defines whether to use Native Kubernetes load-balancing mode by default.
+     nativeLBByDefault: false
+ 
++  # @schema additionalProperties: false
+   kubernetesIngress:
+     # -- Load Kubernetes Ingress provider
+     enabled: true
+@@ -300,9 +304,11 @@ providers:  # @schema additionalProperties: false
+     allowExternalNameServices: false
+     # -- Allows to return 503 when there are no endpoints available
+     allowEmptyServices: true
++    # -- Only for Traefik v3.0, Deprecated since v3.1. See [upstream documentation](https://doc.traefik.io/traefik/v3.0/providers/kubernetes-ingress/#disableingressclasslookup)
++    disableIngressClassLookup: false
+     # -- When ingressClass is set, only Ingresses containing an annotation with the same value are processed. Otherwise, Ingresses missing the annotation, having an empty value, or the value traefik are processed.
+     ingressClass:  # @schema type:[string, null]
+-    # labelSelector: environment=production,method=traefik
++    labelSelector:  # @schema type:[string, null]
+     # -- Array of namespaces to watch. If left empty, Traefik watches all namespaces. . When using `rbac.namespaced`, it will watch helm release namespace and namespaces listed in this array.
+     namespaces: []
+     # IP used for Kubernetes Ingress endpoints
+@@ -318,6 +324,7 @@ providers:  # @schema additionalProperties: false
+     # -- Defines whether to make prefix matching strictly comply with the Kubernetes Ingress specification.
+     strictPrefixMatching: false
+ 
++  # @schema additionalProperties: false
+   kubernetesGateway:
+     # -- Enable Traefik Gateway provider for Gateway API
+     enabled: false
+@@ -327,7 +334,7 @@ providers:  # @schema additionalProperties: false
+     # -- Array of namespaces to watch. If left empty, Traefik watches all namespaces. . When using `rbac.namespaced`, it will watch helm release namespace and namespaces listed in this array.
+     namespaces: []
+     # -- A label selector can be defined to filter on specific GatewayClass objects only.
+-    labelselector: ""
++    labelSelector: ""
+     # -- Defines whether to use Native Kubernetes load-balancing mode by default.
+     nativeLBByDefault: false
+     statusAddress:
+@@ -341,6 +348,7 @@ providers:  # @schema additionalProperties: false
+         name: ""
+         namespace: ""
+ 
++  # @schema additionalProperties: false
+   file:
+     # -- Create a file provider
+     enabled: false
+@@ -349,6 +357,7 @@ providers:  # @schema additionalProperties: false
+     # -- File content (YAML format, go template supported) (see https://doc.traefik.io/traefik/providers/file/)
+     content: ""
+ 
++  # @schema additionalProperties: false
+   kubernetesIngressNginx:
+     # -- Enable Kubernetes Ingress NGINX provider (experimental)
+     enabled: false
+@@ -360,10 +369,10 @@ providers:  # @schema additionalProperties: false
+     ingressClassByName: false
+     # -- Define if Ingress Controller should also watch for Ingresses without an IngressClass or the annotation specified
+     watchIngressWithoutClass: false
+-    # -- Namespace the controller watches for updates to Kubernetes objects. All namespaces are watched if this parameter is left empty. When using `rbac.namespaced`, it will watch helm release namespace and namespaces listed in this array.
+-    namespaces: []
+-    # -- Selector selects namespaces the controller watches for updates to Kubernetes objects
+-    namespaceSelector: ""
++    # -- Namespace the controller watches for updates to Kubernetes objects. Mutually exclusive with watchNamespaceSelector.
++    watchNamespace: ""
++    # -- Select namespaces the controller watches for updates to Kubernetes objects. Mutually exclusive with watchNamespace.
++    watchNamespaceSelector: ""
+     # -- Service fronting the Ingress controller. Takes the form 'namespace/name'
+     publishService:
+       enabled: false
+@@ -383,13 +392,14 @@ providers:  # @schema additionalProperties: false
+     # -- Kubernetes bearer token (not needed for in-cluster client). It accepts either a token value or a file path to the token
+     token: ""
+ 
++  # @schema additionalProperties: false
+   knative:
+     # -- Enable Knative provider
+     enabled: false
+     # -- Array of namespaces to watch. If left empty, Traefik watches all namespaces. . When using `rbac.namespaced`, it will watch helm release namespace and namespaces listed in this array.
+     namespaces: []
+     # -- Allow filtering Knative Ingress objects
+-    labelselector: ""
++    labelSelector: ""
+ 
+ # -- Add volumes to the traefik pod. The volume name will be passed to tpl.
+ # This can be used to mount a cert pair or a configmap that holds a config.toml file.
+@@ -785,7 +795,9 @@ env: []
+ # -- Environment variables to be passed to Traefik's binary from configMaps or secrets
+ envFrom: []
+ 
++# @schema mergeProperties: true
+ ports:
++  # @schema additionalProperties: false
+   traefik:
+     port: 8080
+     # -- Use hostPort if set.
+@@ -819,7 +831,7 @@ ports:
+       traceVerbosity:  # @schema enum:[minimal, detailed, null]; type:[string, null]; default: minimal
+   web:
+     ## -- Enable this entrypoint as a default entrypoint. When a service doesn't explicitly set an entrypoint it will only use this entrypoint.
+-    # asDefault: true
++    asDefault:  # @schema type: [boolean, null]; default: null
+     port: 8000
+     # hostPort: 8000
+     # containerPort: 8000
+@@ -886,6 +898,18 @@ ports:
+     appProtocol:  # @schema type:[string, null]
+     # -- See [upstream documentation](https://doc.traefik.io/traefik/routing/entrypoints/#allowacmebypass)
+     allowACMEByPass: false
++    http:
++      # -- See [upstream documentation](https://doc.traefik.io/traefik/security/request-path/#encoded-character-filtering)
++      encodedCharacters:
++        allowEncodedSlash: false
++        allowEncodedBackSlash: false
++        allowEncodedNullCharacter: false
++        allowEncodedSemicolon: false
++        allowEncodedPercent: false
++        allowEncodedQuestionMark: false
++        allowEncodedHash: false
++      # -- See [upstream documentation](https://doc.traefik.io/traefik/security/request-path/#path-sanitization)
++      sanitizePath:  # @schema type:[boolean, null]
+     http3:
+       ## -- Enable HTTP/3 on the entrypoint
+       ## Enabling it will also enable http3 experimental feature
+@@ -927,7 +951,7 @@ ports:
+     # It follows the provider naming convention: https://doc.traefik.io/traefik/providers/overview/#provider-namespace
+     #   - namespace-name1@kubernetescrd
+     #   - namespace-name2@kubernetescrd
+-    middlewares: []
++    middlewares: []  # @schema type: [array, null]
+     observability:  # @schema additionalProperties: false
+       # -- Enables metrics for this entryPoint.
+       metrics:  # @schema type:[boolean, null]; default: true
+@@ -1042,7 +1066,7 @@ persistence:
+   existingClaim: ""
+   accessMode: ReadWriteOnce
+   size: 128Mi
+-  storageClass: ""
++  storageClass:  # @schema type:[string, null]
+   volumeName: ""
+   path: /data
+   annotations: {}
+```
+
+## 37.4.0  ![AppVersion: v3.6.2](https://img.shields.io/static/v1?label=AppVersion&message=v3.6.2&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-11-20
+
+* feat: allow `publishedService` to be set without service being enabled
+* feat: :rocket: add support of Nginx provider
+* feat(plugins): support ConfigMap inline local plugins alongside hostPath
+* feat(deps): update traefik docker tag to v3.6.2
+* feat(deps): update traefik docker tag to v3.6.1
+* chore(release): 🚀 publish traefik 37.4.0
+
+### Default value changes
+
+```diff
+diff --git a/traefik/values.yaml b/traefik/values.yaml
+index e90d6b9..bc4c5da 100644
+--- a/traefik/values.yaml
++++ b/traefik/values.yaml
+@@ -307,7 +307,8 @@ providers:  # @schema additionalProperties: false
+     namespaces: []
+     # IP used for Kubernetes Ingress endpoints
+     publishedService:
+-      # -- Enable [publishedService](https://doc.traefik.io/traefik/providers/kubernetes-ingress/#publishedservice)
++      # -- Enable [publishedService](https://doc.traefik.io/traefik/providers/kubernetes-ingress/#publishedservice),
++      # usually with the Service provided by this Chart. It's possible to use it with an external Service using pathOverride.
+       enabled: true
+       # -- Override path of Kubernetes Service used to copy status from. Format: namespace/servicename.
+       # Default to Service deployed with this Chart.
+@@ -348,6 +349,40 @@ providers:  # @schema additionalProperties: false
+     # -- File content (YAML format, go template supported) (see https://doc.traefik.io/traefik/providers/file/)
+     content: ""
+ 
++  kubernetesIngressNginx:
++    # -- Enable Kubernetes Ingress NGINX provider (experimental)
++    enabled: false
++    # -- Ingress Class Controller value this controller satisfies
++    controllerClass: "k8s.io/ingress-nginx"
++    # -- Name of the ingress class this controller satisfies
++    ingressClass: "nginx"
++    # -- Define if Ingress Controller should watch for Ingress Class by Name together with Controller Class
++    ingressClassByName: false
++    # -- Define if Ingress Controller should also watch for Ingresses without an IngressClass or the annotation specified
++    watchIngressWithoutClass: false
++    # -- Namespace the controller watches for updates to Kubernetes objects. All namespaces are watched if this parameter is left empty. When using `rbac.namespaced`, it will watch helm release namespace and namespaces listed in this array.
++    namespaces: []
++    # -- Selector selects namespaces the controller watches for updates to Kubernetes objects
++    namespaceSelector: ""
++    # -- Service fronting the Ingress controller. Takes the form 'namespace/name'
++    publishService:
++      enabled: false
++      pathOverride: ""
++    # -- Customized address (or addresses, separated by comma) to set as the load-balancer status of Ingress objects this controller satisfies
++    publishStatusAddress: ""
++    # -- Service used to serve HTTP requests not matching any known server name (catch-all). Takes the form 'namespace/name'
++    defaultBackendService: ""
++    # -- Disable support for Services of type ExternalName
++    disableSvcExternalName: false
++    # -- Ingress refresh throttle duration
++    throttleDuration: ""
++    # -- Kubernetes certificate authority file path (not needed for in-cluster client)
++    certAuthFilePath: ""
++    # -- Kubernetes server endpoint (required for external cluster client)
++    endpoint: ""
++    # -- Kubernetes bearer token (not needed for in-cluster client). It accepts either a token value or a file path to the token
++    token: ""
++
+   knative:
+     # -- Enable Knative provider
+     enabled: false
+```
+
+## 37.3.0  ![AppVersion: v3.6.0](https://img.shields.io/static/v1?label=AppVersion&message=v3.6.0&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-11-10
+
+* tests: update certificatesResolvers with Proxy v3.6 options
+* fix: add missing flag arg
+* fix(doc): :books: comment grammar in values.yaml
+* feat: knative provider
+* feat(deps): update traefik docker tag to v3.6.0
+* feat(deps): update traefik docker tag to v3.5.4
+* feat(CRDs): update for Traefik Proxy v3.6 and Gateway API v1.4.0
+* feat(CRDs): update Traefik Hub to v1.23.1
+* docs: 📚 fix comment grammar in values
+* chore(release): 🚀 publish traefik 37.3.0 and 1.12.0
+
+### Default value changes
+
+```diff
+diff --git a/traefik/values.yaml b/traefik/values.yaml
+index c697f6f..e90d6b9 100644
+--- a/traefik/values.yaml
++++ b/traefik/values.yaml
+@@ -141,13 +141,15 @@ experimental:
+   localPlugins: {}
+   # -- Enable OTLP logging experimental feature.
+   otlpLogs: false
++  # -- Enable Knative provider experimental feature.
++  knative: false
+ 
+ gateway:
+   # -- When providers.kubernetesGateway.enabled, deploy a default gateway
+   enabled: true
+   # -- Set a custom name to gateway
+   name: ""
+-  # -- By default, Gateway is created in the same `Namespace` than Traefik.
++  # -- By default, Gateway is created in the same `Namespace` as Traefik.
+   namespace: ""
+   # -- Additional gateway annotations (e.g. for cert-manager.io/issuer)
+   annotations: {}
+@@ -281,7 +283,7 @@ providers:  # @schema additionalProperties: false
+     allowCrossNamespace: false
+     # -- Allows to reference ExternalName services in IngressRoute
+     allowExternalNameServices: false
+-    # -- Allows to return 503 when there is no endpoints available
++    # -- Allows to return 503 when there are no endpoints available
+     allowEmptyServices: true
+     # -- When the parameter is set, only resources containing an annotation with the same value are processed. Otherwise, resources missing the annotation, having an empty value, or the value traefik are processed. It will also set required annotation on Dashboard and Healthcheck IngressRoute when enabled.
+     ingressClass: ""
+@@ -296,7 +298,7 @@ providers:  # @schema additionalProperties: false
+     enabled: true
+     # -- Allows to reference ExternalName services in Ingress
+     allowExternalNameServices: false
+-    # -- Allows to return 503 when there is no endpoints available
++    # -- Allows to return 503 when there are no endpoints available
+     allowEmptyServices: true
+     # -- When ingressClass is set, only Ingresses containing an annotation with the same value are processed. Otherwise, Ingresses missing the annotation, having an empty value, or the value traefik are processed.
+     ingressClass:  # @schema type:[string, null]
+@@ -346,6 +348,14 @@ providers:  # @schema additionalProperties: false
+     # -- File content (YAML format, go template supported) (see https://doc.traefik.io/traefik/providers/file/)
+     content: ""
+ 
++  knative:
++    # -- Enable Knative provider
++    enabled: false
++    # -- Array of namespaces to watch. If left empty, Traefik watches all namespaces. . When using `rbac.namespaced`, it will watch helm release namespace and namespaces listed in this array.
++    namespaces: []
++    # -- Allow filtering Knative Ingress objects
++    labelselector: ""
++
+ # -- Add volumes to the traefik pod. The volume name will be passed to tpl.
+ # This can be used to mount a cert pair or a configmap that holds a config.toml file.
+ # After the volume has been mounted, add the configs into traefik by using the `additionalArguments` list below, eg:
+@@ -982,7 +992,7 @@ autoscaling:  # @schema additionalProperties: false
+   metrics: []
+   # -- behavior configures the scaling behavior of the target in both Up and Down directions (scaleUp and scaleDown fields respectively).
+   behavior: {}
+-  # -- scaleTargetRef points to the target resource to scale, and is used to the pods for which metrics should be collected, as well as to actually change the replica count.
++  # -- scaleTargetRef points to the target resource to scale, and is used for the pods for which metrics should be collected, as well as to actually change the replica count.
+   scaleTargetRef:
+     apiVersion: apps/v1
+     kind: Deployment
+@@ -1100,14 +1110,14 @@ podSecurityContext:
+ # See #595 for more details and traefik/tests/values/extra.yaml for example.
+ extraObjects: []
+ 
+-# -- This field override the default Release Namespace for Helm.
++# -- This field overrides the default Release Namespace for Helm.
+ # It will not affect optional CRDs such as `ServiceMonitor` and `PrometheusRules`
+ namespaceOverride: ""
+ 
+-# -- This field override the default app.kubernetes.io/instance label for all Objects.
++# -- This field overrides the default app.kubernetes.io/instance label for all Objects.
+ instanceLabelOverride: ""
+ 
+-# -- This field override the default version extracted from image.tag
++# -- This field overrides the default version extracted from image.tag
+ versionOverride: ""
+ 
+ # Traefik Hub configuration. See https://doc.traefik.io/traefik-hub/
+@@ -1197,7 +1207,7 @@ hub:
+       partition: ""
+       # -- Prefix for consul service tags.
+       prefix: "traefik"
+-      # -- Interval for check Consul API.
++      # -- Interval for checking Consul API.
+       refreshInterval: 15
+       # -- Forces the read to be fully consistent.
+       requireConsistent: false
+@@ -1265,7 +1275,7 @@ hub:
+       key: ""
+       # -- When insecureSkipVerify is set to true, the TLS connection accepts any certificate presented by the server. Default: false.
+       insecureSkipVerify: false
+-  # Enable export of errors logs to the platform. Default: true.
++  # Enable export of error logs to the platform. Default: true.
+   sendlogs:  # @schema type:[boolean, null]
+ 
+   tracing:
+```
+
+## 37.2.0  ![AppVersion: v3.5.3](https://img.shields.io/static/v1?label=AppVersion&message=v3.5.3&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-10-21
+
+* feat: support API basePath
+* feat: make dashboard toggleable
+* feat: :package: support Traefik Hub v3.18 pluginRegistry feature
+* feat(traefik-hub): add mcpgateway option
+* feat(observability): :mag: add per entrypoint observability
+* feat(metrics): :chart_with_upwards_trend: add OTLP resourceAttributes support
+* feat(logs): :memo: add missing support of OTLP logs
+* chore(release): 🚀 publish traefik 37.2.0
+* chore(hub): :twisted_rightwards_arrows: update hub and proxy mapping for v3.18
+
+### Default value changes
+
+```diff
+diff --git a/traefik/values.yaml b/traefik/values.yaml
+index cc48b7d..c697f6f 100644
+--- a/traefik/values.yaml
++++ b/traefik/values.yaml
+@@ -139,6 +139,8 @@ experimental:
+   plugins: {}
+   # -- Enable experimental local plugins
+   localPlugins: {}
++  # -- Enable OTLP logging experimental feature.
++  otlpLogs: false
+ 
+ gateway:
+   # -- When providers.kubernetesGateway.enabled, deploy a default gateway
+@@ -188,6 +190,12 @@ gatewayClass:  # @schema additionalProperties: false
+   # -- Additional gatewayClass labels (e.g. for filtering gateway objects by custom labels)
+   labels: {}
+ 
++api:
++  # -- Enable the dashboard
++  dashboard: true
++  # -- Configure API basePath
++  basePath: ""  # @schema type:[string, null]; default: "/"
++
+ # -- Only dashboard & healthcheck IngressRoute are supported. It's recommended to create workloads CR outside of this Chart.
+ ingressRoute:
+   dashboard:
+@@ -370,6 +378,48 @@ logs:
+     filePath: ""
+     # -- When set to true and format is common, it disables the colorized output.
+     noColor: false
++    otlp:
++      # -- Set to true in order to enable OpenTelemetry on logs. Note that experimental.otlpLogs needs to be enabled.
++      enabled: false
++      # -- Service name used in OTLP backend. Default: traefik.
++      serviceName:  # @schema type:[string, null]
++      http:
++        # -- Set to true in order to send logs to the OpenTelemetry Collector using HTTP.
++        enabled: false
++        # -- Format: <scheme>://<host>:<port><path>. Default: https://localhost:4318/v1/logs
++        endpoint: ""
++        # -- Additional headers sent with logs by the reporter to the OpenTelemetry Collector.
++        headers: {}
++        ## Defines the TLS configuration used by the reporter to send logs to the OpenTelemetry Collector.
++        tls:
++          # -- The path to the certificate authority, it defaults to the system bundle.
++          ca: ""
++          # -- The path to the public certificate. When using this option, setting the key option is required.
++          cert: ""
++          # -- The path to the private key. When using this option, setting the cert option is required.
++          key: ""
++          # -- When set to true, the TLS connection accepts any certificate presented by the server regardless of the hostnames it covers.
++          insecureSkipVerify:  # @schema type:[boolean, null]
++      grpc:
++        # -- Set to true in order to send logs  to the OpenTelemetry Collector using gRPC
++        enabled: false
++        # -- Format: <host>:<port>. Default: "localhost:4317"
++        endpoint: ""
++        # -- Allows reporter to send logs to the OpenTelemetry Collector without using a secured protocol.
++        insecure: false
++        ## Defines the TLS configuration used by the reporter to send logs to the OpenTelemetry Collector.
++        tls:
++          # -- The path to the certificate authority, it defaults to the system bundle.
++          ca: ""
++          # -- The path to the public certificate. When using this option, setting the key option is required.
++          cert: ""
++          # -- The path to the private key. When using this option, setting the cert option is required.
++          key: ""
++          # -- When set to true, the TLS connection accepts any certificate presented by the server regardless of the hostnames it covers.
++          insecureSkipVerify: false
++      # -- Defines additional resource attributes to be sent to the collector.
++      resourceAttributes: {}
++
+   access:
+     # -- To enable access logs
+     enabled: false
+@@ -401,6 +451,47 @@ logs:
+         # -- Set default mode for fields.headers
+         defaultmode: drop  # @schema enum:[keep, drop, redact]; default: drop
+         names: {}
++    otlp:
++      # -- Set to true in order to enable OpenTelemetry on access logs. Note that experimental.otlpLogs needs to be enabled.
++      enabled: false
++      # -- Service name used in OTLP backend. Default: traefik.
++      serviceName:  # @schema type:[string, null]
++      http:
++        # -- Set to true in order to send access logs to the OpenTelemetry Collector using HTTP.
++        enabled: false
++        # -- Format: <scheme>://<host>:<port><path>. Default: https://localhost:4318/v1/logs
++        endpoint: ""
++        # -- Additional headers sent with access logs by the reporter to the OpenTelemetry Collector.
++        headers: {}
++        ## Defines the TLS configuration used by the reporter to send access logs to the OpenTelemetry Collector.
++        tls:
++          # -- The path to the certificate authority, it defaults to the system bundle.
++          ca: ""
++          # -- The path to the public certificate. When using this option, setting the key option is required.
++          cert: ""
++          # -- The path to the private key. When using this option, setting the cert option is required.
++          key: ""
++          # -- When set to true, the TLS connection accepts any certificate presented by the server regardless of the hostnames it covers.
++          insecureSkipVerify:  # @schema type:[boolean, null]
++      grpc:
++        # -- Set to true in order to send access logs to the OpenTelemetry Collector using gRPC
++        enabled: false
++        # -- Format: <host>:<port>. Default: "localhost:4317"
++        endpoint: ""
++        # -- Allows reporter to send access logs to the OpenTelemetry Collector without using a secured protocol.
++        insecure: false
++        ## Defines the TLS configuration used by the reporter to send access logs to the OpenTelemetry Collector.
++        tls:
++          # -- The path to the certificate authority, it defaults to the system bundle.
++          ca: ""
++          # -- The path to the public certificate. When using this option, setting the key option is required.
++          cert: ""
++          # -- The path to the private key. When using this option, setting the cert option is required.
++          key: ""
++          # -- When set to true, the TLS connection accepts any certificate presented by the server regardless of the hostnames it covers.
++          insecureSkipVerify: false
++      # -- Defines additional resource attributes to be sent to the collector.
++      resourceAttributes: {}
+ 
+ metrics:
+   # -- Enable metrics for internal resources. Default: false
+@@ -519,7 +610,7 @@ metrics:
+     http:
+       # -- Set to true in order to send metrics to the OpenTelemetry Collector using HTTP.
+       enabled: false
+-      # -- Format: <scheme>://<host>:<port><path>. Default: http://localhost:4318/v1/metrics
++      # -- Format: <scheme>://<host>:<port><path>. Default: https://localhost:4318/v1/metrics
+       endpoint: ""
+       # -- Additional headers sent with metrics by the reporter to the OpenTelemetry Collector.
+       headers: {}
+@@ -536,7 +627,7 @@ metrics:
+     grpc:
+       # -- Set to true in order to send metrics to the OpenTelemetry Collector using gRPC
+       enabled: false
+-      # -- Format: <scheme>://<host>:<port><path>. Default: http://localhost:4318/v1/metrics
++      # -- Format: <host>:<port>. Default: "localhost:4317"
+       endpoint: ""
+       # -- Allows reporter to send metrics to the OpenTelemetry Collector without using a secured protocol.
+       insecure: false
+@@ -550,6 +641,8 @@ metrics:
+         key: ""
+         # -- When set to true, the TLS connection accepts any certificate presented by the server regardless of the hostnames it covers.
+         insecureSkipVerify: false
++    # -- Defines additional resource attributes to be sent to the collector.
++    resourceAttributes: {}
+ 
+ ocsp:
+   # -- Enable OCSP stapling support.
+@@ -581,7 +674,7 @@ tracing:  # @schema additionalProperties: false
+     http:
+       # -- Set to true in order to send metrics to the OpenTelemetry Collector using HTTP.
+       enabled: false
+-      # -- Format: <scheme>://<host>:<port><path>. Default: http://localhost:4318/v1/metrics
++      # -- Format: <scheme>://<host>:<port><path>. Default: https://localhost:4318/v1/tracing
+       endpoint: ""
+       # -- Additional headers sent with metrics by the reporter to the OpenTelemetry Collector.
+       headers: {}
+@@ -598,7 +691,7 @@ tracing:  # @schema additionalProperties: false
+     grpc:
+       # -- Set to true in order to send metrics to the OpenTelemetry Collector using gRPC
+       enabled: false
+-      # -- Format: <scheme>://<host>:<port><path>. Default: http://localhost:4318/v1/metrics
++      # -- Format: <host>:<port>. Default: "localhost:4317"
+       endpoint: ""
+       # -- Allows reporter to send metrics to the OpenTelemetry Collector without using a secured protocol.
+       insecure: false
+@@ -670,6 +763,15 @@ ports:
+     exposedPort: 8080
+     # -- The port protocol (TCP/UDP)
+     protocol: TCP
++    observability:  # @schema additionalProperties: false
++      # -- Defines whether a router attached to this EntryPoint produces metrics by default.
++      metrics:  # @schema type:[boolean, null]; default: true
++      # -- Defines whether a router attached to this EntryPoint produces access-logs by default.
++      accessLogs:  # @schema type:[boolean, null]; default: true
++      # -- Defines whether a router attached to this EntryPoint produces traces by default.
++      tracing:  # @schema type:[boolean, null]; default: true
++      # -- Defines the tracing verbosity level for routers attached to this EntryPoint.
++      traceVerbosity:  # @schema enum:[minimal, detailed, null]; type:[string, null]; default: minimal
+   web:
+     ## -- Enable this entrypoint as a default entrypoint. When a service doesn't explicitly set an entrypoint it will only use this entrypoint.
+     # asDefault: true
+@@ -711,6 +813,15 @@ ports:
+         graceTimeOut:               # @schema type:[string, integer, null]
+       keepAliveMaxRequests:         # @schema type:[integer, null]; minimum:0
+       keepAliveMaxTime:             # @schema type:[string, integer, null]
++    observability:  # @schema additionalProperties: false
++      # -- Enables metrics for this entryPoint.
++      metrics:  # @schema type:[boolean, null]; default: true
++      # -- Enables access-logs for this entryPoint.
++      accessLogs:  # @schema type:[boolean, null]; default: true
++      # -- Enables tracing for this entryPoint.
++      tracing:  # @schema type:[boolean, null]; default: true
++      # -- Defines the tracing verbosity level for this entryPoint.
++      traceVerbosity:  # @schema enum:[minimal, detailed, null]; type:[string, null]; default: minimal
+   websecure:
+     ## -- Enable this entrypoint as a default entrypoint. When a service doesn't explicitly set an entrypoint it will only use this entrypoint.
+     # asDefault: true
+@@ -772,6 +883,15 @@ ports:
+     #   - namespace-name1@kubernetescrd
+     #   - namespace-name2@kubernetescrd
+     middlewares: []
++    observability:  # @schema additionalProperties: false
++      # -- Enables metrics for this entryPoint.
++      metrics:  # @schema type:[boolean, null]; default: true
++      # -- Enables access-logs for this entryPoint.
++      accessLogs:  # @schema type:[boolean, null]; default: true
++      # -- Enables tracing for this entryPoint.
++      tracing:  # @schema type:[boolean, null]; default: true
++      # -- Defines the tracing verbosity level for this entryPoint.
++      traceVerbosity:  # @schema enum:[minimal, detailed, null]; type:[string, null]; default: minimal
+   metrics:
+     # -- When using hostNetwork, use another port to avoid conflict with node exporter:
+     # https://github.com/prometheus/prometheus/wiki/Default-port-allocations
+@@ -785,6 +905,15 @@ ports:
+     exposedPort: 9100
+     # -- The port protocol (TCP/UDP)
+     protocol: TCP
++    observability:  # @schema additionalProperties: false
++      # -- Enables metrics for this entryPoint.
++      metrics:  # @schema type:[boolean, null]; default: true
++      # -- Enables access-logs for this entryPoint.
++      accessLogs:  # @schema type:[boolean, null]; default: true
++      # -- Enables tracing for this entryPoint.
++      tracing:  # @schema type:[boolean, null]; default: true
++      # -- Defines the tracing verbosity level for this entryPoint.
++      traceVerbosity:  # @schema enum:[minimal, detailed, null]; type:[string, null]; default: minimal
+ 
+ # -- TLS Options are created as [TLSOption CRDs](https://doc.traefik.io/traefik/https/tls/#tls-options)
+ # When using `labelSelector`, you'll need to set labels on tlsOption accordingly.
+@@ -1010,6 +1139,12 @@ hub:
+       # -- When set to true, it will only accept paths and methods that are explicitly defined in its OpenAPI specification
+       validateRequestMethodAndPath: false
+ 
++  mcpgateway:
++    # -- Set to true in order to enable AI MCP Gateway. Requires a valid license token.
++    enabled: false
++    # -- Hard limit for the size of request bodies inspected by the gateway. Accepts a plain integer representing **bytes**. The default value is `1048576` (1 MiB).
++    maxRequestBodySize:  # @schema type:[integer, null]; minimum:0
++
+   aigateway:
+     # -- Set to true in order to enable AI Gateway. Requires a valid license token.
+     enabled: false
+@@ -1148,6 +1283,10 @@ hub:
+         # -- Name of the header that will contain the tracestate copy.
+         traceState: ""
+ 
++  # Define private plugin sources
++  pluginRegistry:
++    sources: {}
++
+ # -- Required for OCI Marketplace integration.
+ # See https://docs.public.content.oci.oraclecloud.com/en-us/iaas/Content/Marketplace/understanding-helm-charts.htm
+ oci_meta:
+```
+
+## 37.1.2  ![AppVersion: v3.5.3](https://img.shields.io/static/v1?label=AppVersion&message=v3.5.3&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-10-03
+
+* fix(observability): tracer creation warning with default security context
+* fix(CRDs): ✨ update for Traefik Proxy v3.5.2
+* feat(deps): update traefik docker tag to v3.5.3 + add plugin hash option
+* feat(CRDs): update for Traefik to v3.5.3
+* chore(release): :rocket: publish traefik 37.1.2 and crds 1.11.1
+
+## 37.1.1  ![AppVersion: v3.5.2](https://img.shields.io/static/v1?label=AppVersion&message=v3.5.2&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-09-10
+
+* feat(hub): allow to specify admission controller certificate from existing secret
+* feat(deps): update traefik docker tag to v3.5.2
+* feat(accesslog): ✨ add genericCLF format
+* chore(release): 🚀 publish v37.1.1
+
+### Default value changes
+
+```diff
+diff --git a/traefik/values.yaml b/traefik/values.yaml
+index b56a33b..cc48b7d 100644
+--- a/traefik/values.yaml
++++ b/traefik/values.yaml
+@@ -374,7 +374,7 @@ logs:
+     # -- To enable access logs
+     enabled: false
+     # -- Set [access log format](https://doc.traefik.io/traefik/observability/access-logs/#format)
+-    format:  # @schema enum:["common", "json", null]; type:[string, null]; default: "common"
++    format:  # @schema enum:["common", "genericCLF", "json", null]; type:[string, null]; default: "common"
+     # filePath: "/var/log/traefik/access.log
+     # -- Set [bufferingSize](https://doc.traefik.io/traefik/observability/access-logs/#bufferingsize)
+     bufferingSize:  # @schema type:[integer, null]
+@@ -998,6 +998,8 @@ hub:
+       listenAddr: ""
+       # -- Certificate name of the WebHook admission server. Default: "hub-agent-cert".
+       secretName: "hub-agent-cert"
++      # -- By default, this chart handles directly the tls certificate required for the admission webhook. It's possible to disable this behavior and handle it outside of the chart. See EXAMPLES.md for more details.
++      selfManagedCertificate: false
+       # -- Set custom certificate for the WebHook admission server. The certificate should be specified with _tls.crt_ and _tls.key_ in base64 encoding.
+       customWebhookCertificate: {}
+       # -- Set it to false if you need to disable Traefik Hub pod restart when mutating webhook certificate is updated. It's done with a label update.
+```
+
+## 37.1.0  ![AppVersion: v3.5.1](https://img.shields.io/static/v1?label=AppVersion&message=v3.5.1&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-09-03
+
+* refactor: remove `$root` hacks in favor of using `$`
+* refactor: only render `--global.checkNewVersion` when it differs from default
+* fix: prevent blank lines in args
+* fix(deployment): allow to disable checkNewVersion via values.yaml
+* feat: support custom monitoring api
+* feat: support Traefik v3.5 features
+* feat(hub): add annotations for webhook admission
+* feat(hooks): use now stable prestop command syntax
+* feat(deps): update traefik docker tag to v3.5.1
+* feat(deployment): add chart value timezone that auomatically configures access logs timezone
+* feat(CRDs): update Traefik Hub to v1.21.1
+* feat(CRDs): add gatewayAPI experimental channel option
+* docs(plugins): Sync VALUES.md
+* chore(release): :rocket: Publish 37.1.0 and 1.11.0
+
+### Default value changes
+
+```diff
+diff --git a/traefik/values.yaml b/traefik/values.yaml
+index 0c1274f..b56a33b 100644
+--- a/traefik/values.yaml
++++ b/traefik/values.yaml
+@@ -91,8 +91,8 @@ deployment:
+   # -- Pod lifecycle actions
+   lifecycle: {}
+   # preStop:
+-  #   exec:
+-  #     command: ["/bin/sh", "-c", "sleep 40"]
++  #   sleep:
++  #     seconds: 20
+   # postStart:
+   #   httpGet:
+   #     path: /ping
+@@ -161,7 +161,7 @@ gateway:
+       hostname: ""
+       # Specify expected protocol on this listener. See [ProtocolType](https://gateway-api.sigs.k8s.io/reference/spec/#gateway.networking.k8s.io/v1.ProtocolType)
+       protocol: HTTP
+-      # -- Routes are restricted to namespace of the gateway [by default](https://gateway-api.sigs.k8s.io/reference/spec/#gateway.networking.k8s.io/v1.FromNamespaces
++      # -- (object) Routes are restricted to namespace of the gateway [by default](https://gateway-api.sigs.k8s.io/reference/spec/#gateway.networking.k8s.io/v1.FromNamespaces
+       namespacePolicy:  # @schema type:[object, null]
+     # websecure listener is disabled by default because certificateRefs needs to be added,
+     # or you may specify TLS protocol with Passthrough mode and add "--providers.kubernetesGateway.experimentalChannel=true" in additionalArguments section.
+@@ -378,6 +378,8 @@ logs:
+     # filePath: "/var/log/traefik/access.log
+     # -- Set [bufferingSize](https://doc.traefik.io/traefik/observability/access-logs/#bufferingsize)
+     bufferingSize:  # @schema type:[integer, null]
++    # -- Set [timezone](https://doc.traefik.io/traefik/observability/access-logs/#time-zones)
++    timezone: ""
+     # -- Set [filtering](https://docs.traefik.io/observability/access-logs/#filtering)
+     filters:  # @schema additionalProperties: false
+       # -- Set statusCodes, to limit the access logs to requests with a status codes in the specified range
+@@ -432,6 +434,7 @@ metrics:
+     serviceMonitor:
+       # -- Enable optional CR for Prometheus Operator. See EXAMPLES.md for more details.
+       enabled: false
++      apiVersion: "monitoring.coreos.com/v1"
+       metricRelabelings: []
+       relabelings: []
+       jobLabel: ""
+@@ -447,6 +450,7 @@ metrics:
+     prometheusRule:
+       # -- Enable optional CR for Prometheus Operator. See EXAMPLES.md for more details.
+       enabled: false
++      apiVersion: "monitoring.coreos.com/v1"
+       additionalLabels: {}
+       namespace: ""
+ 
+@@ -547,6 +551,13 @@ metrics:
+         # -- When set to true, the TLS connection accepts any certificate presented by the server regardless of the hostnames it covers.
+         insecureSkipVerify: false
+ 
++ocsp:
++  # -- Enable OCSP stapling support.
++  # See https://doc.traefik.io/traefik/https/ocsp/#overview
++  enabled: false
++  # -- Defines the OCSP responder URLs to use instead of the one provided by the certificate.
++  responderOverrides: {}
++
+ ## Tracing
+ # -- https://doc.traefik.io/traefik/observability/tracing/overview/
+ tracing:  # @schema additionalProperties: false
+@@ -991,6 +1002,8 @@ hub:
+       customWebhookCertificate: {}
+       # -- Set it to false if you need to disable Traefik Hub pod restart when mutating webhook certificate is updated. It's done with a label update.
+       restartOnCertificateChange: true
++      # -- Set custom annotations.
++      annotations: {}
+     openApi:
+       # -- When set to true, it will only accept paths and methods that are explicitly defined in its OpenAPI specification
+       validateRequestMethodAndPath: false
+```
+
+## 37.0.0  ![AppVersion: v3.5.0](https://img.shields.io/static/v1?label=AppVersion&message=v3.5.0&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-07-29
+
+* fix(observability): allow `tracing.sampleRate` to be set to zero
+* fix(entryPoint): allow scheme to be unset on redirect
+* fix(Deployment): revision history should be disableable
+* feat(podtemplate): add support for localPlugins
+* feat(podtemplate): add capacity to set GOMEMLIMIT with default at 90% of user-set memory limit
+* feat(hub): offline mode
+* feat(gateway-api)!: support selector for namespace policy
+* feat(deps): update traefik docker tag to v3.5.0
+* feat(CRDs): update for Traefik Proxy v3.5 and Gateway API v1.3.0
+* feat(CRDs): update Traefik Hub to v1.21.0
+* docs(plugins): improve wording and sync with `VALUES.md`
+* chore(release): :rocket: publish 37.0.0 and 1.10.0
+
+### Default value changes
+
+```diff
+diff --git a/traefik/values.yaml b/traefik/values.yaml
+index 25a47a9..0c1274f 100644
+--- a/traefik/values.yaml
++++ b/traefik/values.yaml
+@@ -101,6 +101,10 @@ deployment:
+   #     scheme: HTTP
+   # -- Set a runtimeClassName on pod
+   runtimeClassName: ""
++  # -- Percentage of memory limit to set for GOMEMLIMIT
++  # -- set as decimal (0.9 = 90%, 0.95 = 95% etc)
++  # -- only takes effect when resources.limits.memory is set
++  goMemLimitPercentage: 0.9
+ 
+ # -- [Pod Disruption Budget](https://kubernetes.io/docs/reference/kubernetes-api/policy-resources/pod-disruption-budget-v1/)
+ podDisruptionBudget:  # @schema additionalProperties: false
+@@ -131,11 +135,10 @@ experimental:
+   kubernetesGateway:
+     # -- Enable traefik experimental GatewayClass CRD
+     enabled: false
+-  # -- Enable traefik experimental plugins
++  # -- Enable experimental plugins
+   plugins: {}
+-  # demo:
+-  #   moduleName: github.com/traefik/plugindemo
+-  #   version: v0.2.1
++  # -- Enable experimental local plugins
++  localPlugins: {}
+ 
+ gateway:
+   # -- When providers.kubernetesGateway.enabled, deploy a default gateway
+@@ -159,7 +162,7 @@ gateway:
+       # Specify expected protocol on this listener. See [ProtocolType](https://gateway-api.sigs.k8s.io/reference/spec/#gateway.networking.k8s.io/v1.ProtocolType)
+       protocol: HTTP
+       # -- Routes are restricted to namespace of the gateway [by default](https://gateway-api.sigs.k8s.io/reference/spec/#gateway.networking.k8s.io/v1.FromNamespaces
+-      namespacePolicy:  # @schema type:[string, null]
++      namespacePolicy:  # @schema type:[object, null]
+     # websecure listener is disabled by default because certificateRefs needs to be added,
+     # or you may specify TLS protocol with Passthrough mode and add "--providers.kubernetesGateway.experimentalChannel=true" in additionalArguments section.
+     # websecure:
+@@ -301,6 +304,8 @@ providers:  # @schema additionalProperties: false
+       pathOverride: ""
+     # -- Defines whether to use Native Kubernetes load-balancing mode by default.
+     nativeLBByDefault: false
++    # -- Defines whether to make prefix matching strictly comply with the Kubernetes Ingress specification.
++    strictPrefixMatching: false
+ 
+   kubernetesGateway:
+     # -- Enable Traefik Gateway provider for Gateway API
+@@ -971,7 +976,7 @@ hub:
+   # It enables API Gateway.
+   token: ""
+   # -- Disables all external network connections.
+-  offline: false
++  offline:  # @schema type:[boolean, null]
+   # -- By default, Traefik Hub provider watches all namespaces. When using `rbac.namespaced`, it will watch helm release namespace and namespaces listed in this array.
+   namespaces: []  # @schema required:true
+   apimanagement:
+```
+
+## 36.3.0  ![AppVersion: v3.4.3](https://img.shields.io/static/v1?label=AppVersion&message=v3.4.3&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-07-01
+
+* feat(deps): update traefik docker tag to v3.4.3
+* feat(deployment): allow null and 0 replicas
+* chore(release): 🚀 publish 36.3.0
+
+## 36.2.0  ![AppVersion: v3.4.1](https://img.shields.io/static/v1?label=AppVersion&message=v3.4.1&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-06-23
+
+* fix(CRDs): :bug: kustomization file for CRDs
+* feat(hub): ✨ initial support for AI Gateway
+* feat(hub): update version mapping with Proxy v3.4
+* feat(hpa): ✨ customizable scaleTargetRef
+* chore(schema): update linter
+* chore(release): 🚀 publish v36.2.0 and CRDs v1.9.0
+
+### Default value changes
+
+```diff
+diff --git a/traefik/values.yaml b/traefik/values.yaml
+index c6daa8d..25a47a9 100644
+--- a/traefik/values.yaml
++++ b/traefik/values.yaml
+@@ -825,10 +825,23 @@ service:
+   #   # externalIPs: []
+   #   # ipFamilies: [ "IPv4","IPv6" ]
+ 
+-autoscaling:
++autoscaling:  # @schema additionalProperties: false
+   # -- Create HorizontalPodAutoscaler object.
+   # See EXAMPLES.md for more details.
+   enabled: false
++  # -- minReplicas is the lower limit for the number of replicas to which the autoscaler can scale down. It defaults to 1 pod.
++  minReplicas:  # @schema type:[integer, null]; minimum:0
++  # -- maxReplicas is the upper limit for the number of pods that can be set by the autoscaler; cannot be smaller than MinReplicas.
++  maxReplicas:  # @schema type:[integer, null]; minimum:0
++  # -- metrics contains the specifications for which to use to calculate the desired replica count (the maximum replica count across all metrics will be used).
++  metrics: []
++  # -- behavior configures the scaling behavior of the target in both Up and Down directions (scaleUp and scaleDown fields respectively).
++  behavior: {}
++  # -- scaleTargetRef points to the target resource to scale, and is used to the pods for which metrics should be collected, as well as to actually change the replica count.
++  scaleTargetRef:
++    apiVersion: apps/v1
++    kind: Deployment
++    name: "{{ template \"traefik.fullname\" . }}"
+ 
+ persistence:
+   # -- Enable persistence using Persistent Volume Claims
+@@ -977,9 +990,11 @@ hub:
+       # -- When set to true, it will only accept paths and methods that are explicitly defined in its OpenAPI specification
+       validateRequestMethodAndPath: false
+ 
+-  experimental:
++  aigateway:
+     # -- Set to true in order to enable AI Gateway. Requires a valid license token.
+-    aigateway: false
++    enabled: false
++    # -- Hard limit for the size of request bodies inspected by the gateway. Accepts a plain integer representing **bytes**. The default value is `1048576` (1 MiB).
++    maxRequestBodySize:  # @schema type:[integer, null]; minimum:0
+   providers:
+     consulCatalogEnterprise:
+       # -- Enable Consul Catalog Enterprise backend with default settings.
+```
+
+## 36.2.0-rc1  ![AppVersion: v3.4.1](https://img.shields.io/static/v1?label=AppVersion&message=v3.4.1&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-06-11
+
+* feat(CRDs): update Traefik Hub to v1.20.1
+* chore: release traefik v36.2.0-rc1 and traefik-crds v1.9.0-rc1
+
+
+## 36.1.0  ![AppVersion: v3.4.1](https://img.shields.io/static/v1?label=AppVersion&message=v3.4.1&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-06-10
+
+* fix(schema): 🐛 allow additional properties on `global`
+* fix(chart): update icon link to track upstream master branch
+* fix(Traefik Hub): add strict check on admission cert
+* feat(Traefik Hub): add v3.17 version mapping
+* chore(release): 🚀 publish v36.1.0
+
+### Default value changes
+
+```diff
+diff --git a/traefik/values.yaml b/traefik/values.yaml
+index 9bcb400..c6daa8d 100644
+--- a/traefik/values.yaml
++++ b/traefik/values.yaml
+@@ -597,7 +597,7 @@ tracing:  # @schema additionalProperties: false
+         # -- When set to true, the TLS connection accepts any certificate presented by the server regardless of the hostnames it covers.
+         insecureSkipVerify: false
+ 
+-global:  # @schema additionalProperties: false
++global:
+   checkNewVersion: true
+   # -- Please take time to consider whether or not you wish to share anonymous data with us
+   # See https://doc.traefik.io/traefik/contributing/data-collection/
+```
+
+## 36.0.0  ![AppVersion: v3.4.1](https://img.shields.io/static/v1?label=AppVersion&message=v3.4.1&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-06-06
+
+* fix(notes): update condition to display certificate persistence warning
+* fix(Traefik Proxy): supported `ingressRoute.*.annotations` breaks templating
+* fix(Traefik Proxy)!: strict opt-in on data collection
+* feat(deps): update traefik docker tag to v3.4.1
+* feat(Traefik Hub): add offline flag
+* chore(schema): 🔧 update following latest upstream release
+* chore(release): 🚀 publish v36.0.0
+
+**Upgrade Notes**
+
+There is a breaking change on `globalArguments` which has been replaced by `global.xx`, following upstream.
+See PR [#1436](https://github.com/traefik/traefik-helm-chart/pull/1436) for details.
+
+Following GDPR, anonymous stats usage has been disabled by default.
+Please take time to consider whether or not you wish to share anonymous data to help TraefikLabs improve Traefik Proxy.
+
+### Default value changes
+
+```diff
+diff --git a/traefik/values.yaml b/traefik/values.yaml
+index a9b74a3..9bcb400 100644
+--- a/traefik/values.yaml
++++ b/traefik/values.yaml
+@@ -185,6 +185,7 @@ gatewayClass:  # @schema additionalProperties: false
+   # -- Additional gatewayClass labels (e.g. for filtering gateway objects by custom labels)
+   labels: {}
+ 
++# -- Only dashboard & healthcheck IngressRoute are supported. It's recommended to create workloads CR outside of this Chart.
+ ingressRoute:
+   dashboard:
+     # -- Create an IngressRoute for the dashboard
+@@ -596,10 +597,25 @@ tracing:  # @schema additionalProperties: false
+         # -- When set to true, the TLS connection accepts any certificate presented by the server regardless of the hostnames it covers.
+         insecureSkipVerify: false
+ 
+-# -- Global command arguments to be passed to all traefik's pods
+-globalArguments:
+-  - "--global.checknewversion"
+-  - "--global.sendanonymoususage"
++global:  # @schema additionalProperties: false
++  checkNewVersion: true
++  # -- Please take time to consider whether or not you wish to share anonymous data with us
++  # See https://doc.traefik.io/traefik/contributing/data-collection/
++  sendAnonymousUsage: false
++  # -- Required for Azure Marketplace integration.
++  # See https://learn.microsoft.com/en-us/partner-center/marketplace-offers/azure-container-technical-assets-kubernetes?tabs=linux,linux2#update-the-helm-chart
++  azure:
++    # -- Enable specific values for Azure Marketplace
++    enabled: false
++    images:
++      proxy:
++        image: traefik
++        tag: latest
++        registry: docker.io/library
++      hub:
++        image: traefik-hub
++        tag: latest
++        registry: ghcr.io/traefik
+ 
+ # -- Additional arguments to be passed at Traefik's binary
+ # See [CLI Reference](https://docs.traefik.io/reference/static-configuration/cli/)
+@@ -941,6 +957,8 @@ hub:
+   # -- Name of `Secret` with key 'token' set to a valid license token.
+   # It enables API Gateway.
+   token: ""
++  # -- Disables all external network connections.
++  offline: false
+   # -- By default, Traefik Hub provider watches all namespaces. When using `rbac.namespaced`, it will watch helm release namespace and namespaces listed in this array.
+   namespaces: []  # @schema required:true
+   apimanagement:
+@@ -1109,19 +1127,3 @@ oci_meta:
+     hub:
+       image: traefik-hub
+       tag: latest
+-
+-# -- Required for Azure Marketplace integration.
+-# See https://learn.microsoft.com/en-us/partner-center/marketplace-offers/azure-container-technical-assets-kubernetes?tabs=linux,linux2#update-the-helm-chart
+-global:
+-  azure:
+-    # -- Enable specific values for Azure Marketplace
+-    enabled: false
+-    images:
+-      proxy:
+-        image: traefik
+-        tag: latest
+-        registry: docker.io/library
+-      hub:
+-        image: traefik-hub
+-        tag: latest
+-        registry: ghcr.io/traefik
+```
+
+## 35.4.0  ![AppVersion: v3.4.0](https://img.shields.io/static/v1?label=AppVersion&message=v3.4.0&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-05-23
+
+* fix(CRDs): validation check on RootCA for both servertransport
+* feat(Traefik Hub): :sparkles: automatically restart API Management pods on admission certificate change
+* chore(release): :rocket: publish v35.4.0 and CRDs v1.8.1
+
+### Default value changes
+
+```diff
+diff --git a/traefik/values.yaml b/traefik/values.yaml
+index ff04c8b..a9b74a3 100644
+--- a/traefik/values.yaml
++++ b/traefik/values.yaml
+@@ -953,6 +953,8 @@ hub:
+       secretName: "hub-agent-cert"
+       # -- Set custom certificate for the WebHook admission server. The certificate should be specified with _tls.crt_ and _tls.key_ in base64 encoding.
+       customWebhookCertificate: {}
++      # -- Set it to false if you need to disable Traefik Hub pod restart when mutating webhook certificate is updated. It's done with a label update.
++      restartOnCertificateChange: true
+     openApi:
+       # -- When set to true, it will only accept paths and methods that are explicitly defined in its OpenAPI specification
+       validateRequestMethodAndPath: false
+```
+
+## 35.3.0  ![AppVersi   on: v3.4.0](https://img.shields.io/static/v1?label=AppVersion&message=v3.4.0&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-05-19
+
+* fix: :bug: ingress route annotations should not be null
+* fix(Traefik Hub): fail when upgrading with --reuse-values
+* fix(Traefik Hub): custom certificate name for WebHook
+* feat: azure marketplace integration
+* feat: add serviceName for otlp metrics
+* feat(deps): update traefik docker tag to v3.4.0
+* feat(deps): update traefik docker tag to v3.3.7
+* feat(Traefik Hub): improve UserXP on token
+* feat(Traefik Hub): :sparkles: set custom certificate for Hub webhooks
+* feat(CRDs): ✨ update CRDs for Traefik Proxy v3.4.x
+* chore: update maintainers
+* chore: remove K8s version check for unsupported version
+* chore(release): :rocket: publish v35.3.0 and CRDs v1.8.0
+
+### Default value changes
+
+```diff
+diff --git a/traefik/values.yaml b/traefik/values.yaml
+index 04f4973..ff04c8b 100644
+--- a/traefik/values.yaml
++++ b/traefik/values.yaml
+@@ -115,7 +115,7 @@ ingressClass:  # @schema additionalProperties: false
+   name: ""
+ 
+ core:  # @schema additionalProperties: false
+-  # -- Can be used to use globally v2 router syntax
++  # -- Can be used to use globally v2 router syntax. Deprecated since v3.4 /!\.
+   # See https://doc.traefik.io/traefik/v3.0/migration/v2-to-v3/#new-v3-syntax-notable-changes
+   defaultRuleSyntax: ""
+ 
+@@ -504,6 +504,8 @@ metrics:
+     explicitBoundaries: []
+     # -- Interval at which metrics are sent to the OpenTelemetry Collector. Default: 10s
+     pushInterval: ""
++    # -- Service name used in OTLP backend. Default: traefik.
++    serviceName:  # @schema type:[string, null]
+     http:
+       # -- Set to true in order to send metrics to the OpenTelemetry Collector using HTTP.
+       enabled: false
+@@ -596,8 +598,8 @@ tracing:  # @schema additionalProperties: false
+ 
+ # -- Global command arguments to be passed to all traefik's pods
+ globalArguments:
+-- "--global.checknewversion"
+-- "--global.sendanonymoususage"
++  - "--global.checknewversion"
++  - "--global.sendanonymoususage"
+ 
+ # -- Additional arguments to be passed at Traefik's binary
+ # See [CLI Reference](https://docs.traefik.io/reference/static-configuration/cli/)
+@@ -940,15 +942,17 @@ hub:
+   # It enables API Gateway.
+   token: ""
+   # -- By default, Traefik Hub provider watches all namespaces. When using `rbac.namespaced`, it will watch helm release namespace and namespaces listed in this array.
+-  namespaces: []
++  namespaces: []  # @schema required:true
+   apimanagement:
+     # -- Set to true in order to enable API Management. Requires a valid license token.
+     enabled: false
+     admission:
+       # -- WebHook admission server listen address. Default: "0.0.0.0:9943".
+       listenAddr: ""
+-      # -- Certificate of the WebHook admission server. Default: "hub-agent-cert".
+-      secretName: ""
++      # -- Certificate name of the WebHook admission server. Default: "hub-agent-cert".
++      secretName: "hub-agent-cert"
++      # -- Set custom certificate for the WebHook admission server. The certificate should be specified with _tls.crt_ and _tls.key_ in base64 encoding.
++      customWebhookCertificate: {}
+     openApi:
+       # -- When set to true, it will only accept paths and methods that are explicitly defined in its OpenAPI specification
+       validateRequestMethodAndPath: false
+@@ -1103,3 +1107,19 @@ oci_meta:
+     hub:
+       image: traefik-hub
+       tag: latest
++
++# -- Required for Azure Marketplace integration.
++# See https://learn.microsoft.com/en-us/partner-center/marketplace-offers/azure-container-technical-assets-kubernetes?tabs=linux,linux2#update-the-helm-chart
++global:
++  azure:
++    # -- Enable specific values for Azure Marketplace
++    enabled: false
++    images:
++      proxy:
++        image: traefik
++        tag: latest
++        registry: docker.io/library
++      hub:
++        image: traefik-hub
++        tag: latest
++        registry: ghcr.io/traefik
+```
+
+## 35.2.0  ![AppVersion: v3.3.6](https://img.shields.io/static/v1?label=AppVersion&message=v3.3.6&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-04-29
+
+* fix(Traefik Hub): really disable sendlogs when set to false
+* fix(Traefik Hub): prefix mutating webhook by release name
+* feat(Traefik Hub): option to set token in values
+* chore(release): 🚀 publish v35.2.0
+
+## 35.1.0  ![AppVersion: v3.3.6](https://img.shields.io/static/v1?label=AppVersion&message=v3.3.6&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-04-25
+
+* feat: ✨ versionOverride
+* feat(Traefik Hub): namespaces
+* feat(CRDs): remove APIAccess resource
+* chore(release): :rocket: publish v35.1.0 and CRDs v1.7.0
+
+**Upgrade Notes**
+
+Traefik-Hub users should follow this procedure:
+
+1. `APIAccess` resources needs to be converted to [`APICatalogItem`](https://doc.traefik.io/traefik-hub/api-management/api-catalogitem) ones
+2. run the [usual upgrade procedure](https://github.com/traefik/traefik-helm-chart/blob/master/README.md#upgrading)
+3. delete the `APIAccess` CRD by running:
+
+```bash
+kubectl delete customresourcedefinitions.apiextensions.k8s.io apiaccesses.hub.traefik.io
+```
+
+### Default value changes
+
+```diff
+diff --git a/traefik/values.yaml b/traefik/values.yaml
+index f2b90da..04f4973 100644
+--- a/traefik/values.yaml
++++ b/traefik/values.yaml
+@@ -7,7 +7,8 @@ image:  # @schema additionalProperties: false
+   registry: docker.io
+   # -- Traefik image repository
+   repository: traefik
+-  # -- defaults to appVersion
++  # -- defaults to appVersion. It's used for version checking, even prefixed with experimental- or latest-.
++  # When a digest is required, `versionOverride` can be used to set the version.
+   tag:  # @schema type:[string, null]
+   # -- Traefik image pull policy
+   pullPolicy: IfNotPresent
+@@ -273,7 +274,7 @@ providers:  # @schema additionalProperties: false
+     # -- When the parameter is set, only resources containing an annotation with the same value are processed. Otherwise, resources missing the annotation, having an empty value, or the value traefik are processed. It will also set required annotation on Dashboard and Healthcheck IngressRoute when enabled.
+     ingressClass: ""
+     # labelSelector: environment=production,method=traefik
+-    # -- Array of namespaces to watch. If left empty, Traefik watches all namespaces.
++    # -- Array of namespaces to watch. If left empty, Traefik watches all namespaces. . When using `rbac.namespaced`, it will watch helm release namespace and namespaces listed in this array.
+     namespaces: []
+     # -- Defines whether to use Native Kubernetes load-balancing mode by default.
+     nativeLBByDefault: false
+@@ -288,7 +289,7 @@ providers:  # @schema additionalProperties: false
+     # -- When ingressClass is set, only Ingresses containing an annotation with the same value are processed. Otherwise, Ingresses missing the annotation, having an empty value, or the value traefik are processed.
+     ingressClass:  # @schema type:[string, null]
+     # labelSelector: environment=production,method=traefik
+-    # -- Array of namespaces to watch. If left empty, Traefik watches all namespaces.
++    # -- Array of namespaces to watch. If left empty, Traefik watches all namespaces. . When using `rbac.namespaced`, it will watch helm release namespace and namespaces listed in this array.
+     namespaces: []
+     # IP used for Kubernetes Ingress endpoints
+     publishedService:
+@@ -306,7 +307,7 @@ providers:  # @schema additionalProperties: false
+     # -- Toggles support for the Experimental Channel resources (Gateway API release channels documentation).
+     # This option currently enables support for TCPRoute and TLSRoute.
+     experimentalChannel: false
+-    # -- Array of namespaces to watch. If left empty, Traefik watches all namespaces.
++    # -- Array of namespaces to watch. If left empty, Traefik watches all namespaces. . When using `rbac.namespaced`, it will watch helm release namespace and namespaces listed in this array.
+     namespaces: []
+     # -- A label selector can be defined to filter on specific GatewayClass objects only.
+     labelselector: ""
+@@ -927,14 +928,19 @@ extraObjects: []
+ # It will not affect optional CRDs such as `ServiceMonitor` and `PrometheusRules`
+ namespaceOverride: ""
+ 
+-## -- This field override the default app.kubernetes.io/instance label for all Objects.
++# -- This field override the default app.kubernetes.io/instance label for all Objects.
+ instanceLabelOverride: ""
+ 
++# -- This field override the default version extracted from image.tag
++versionOverride: ""
++
+ # Traefik Hub configuration. See https://doc.traefik.io/traefik-hub/
+ hub:
+   # -- Name of `Secret` with key 'token' set to a valid license token.
+   # It enables API Gateway.
+   token: ""
++  # -- By default, Traefik Hub provider watches all namespaces. When using `rbac.namespaced`, it will watch helm release namespace and namespaces listed in this array.
++  namespaces: []
+   apimanagement:
+     # -- Set to true in order to enable API Management. Requires a valid license token.
+     enabled: false
+
+## 35.0.1  ![AppVersion: v3.3.6](https://img.shields.io/static/v1?label=AppVersion&message=v3.3.6&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-04-18
+
+* feat(deps): update traefik docker tag to v3.3.6
+* chore(release): :rocket: publish traefik 35.0.1
+
+## 35.0.0  ![AppVersion: v3.3.5](https://img.shields.io/static/v1?label=AppVersion&message=v3.3.5&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-04-07
+
+* fix: do not quote protocol on pod ports
+* fix(tracing): 🐛 multiple response or request headers
+* feat: ✨ Oracle Cloud marketplace integration
+* feat(deps): update traefik docker tag to v3.3.5
+* feat!: add port name template functions
+* chore(release): :rocket: publish traefik 35.0.0
+* chore(helpers): :bookmark: update hub proxy corresponding versions
+* chore(ci): :bug: should fail on test error
+
+**Upgrade Notes**
+
+This release has been marked as major as it might [modify service and deployment port names](https://github.com/traefik/traefik-helm-chart/pull/1363) (if they use uppercase characters or are longer than 15 characters).
+Nevertheless, even in these cases, it should not impact the availability of your endpoints.
+
+### Default value changes
+
+```diff
+diff --git a/traefik/values.yaml b/traefik/values.yaml
+index 956000d..f2b90da 100644
+--- a/traefik/values.yaml
++++ b/traefik/values.yaml
+@@ -1082,3 +1082,18 @@ hub:
+         traceParent: ""
+         # -- Name of the header that will contain the tracestate copy.
+         traceState: ""
++
++# -- Required for OCI Marketplace integration.
++# See https://docs.public.content.oci.oraclecloud.com/en-us/iaas/Content/Marketplace/understanding-helm-charts.htm
++oci_meta:
++  # -- Enable specific values for Oracle Cloud Infrastructure
++  enabled: false
++    # -- It needs to be an ocir repo
++  repo: traefik
++  images:
++    proxy:
++      image: traefik
++      tag: latest
++    hub:
++      image: traefik-hub
++      tag: latest
+```
+
+## 34.5.0  ![AppVersion: v3.3.4](https://img.shields.io/static/v1?label=AppVersion&message=v3.3.4&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-03-31
+
+* fix(gateway): `gateway.namespace` value is ignored
+* feat: allow templating the additionalVolumeMounts configuration
+* feat(CRDs): 🔧 update Traefik Hub CRDs to v1.17.2
+* chore(release): publish crds 1.6.0 and traefik 34.5.0
+
+## 34.4.1  ![AppVersion: v3.3.4](https://img.shields.io/static/v1?label=AppVersion&message=v3.3.4&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-02-28
+
+* fix(Traefik Proxy): headerLabels does not exist for metrics.prometheus
+* fix(Traefik Hub): add missing consulCatalogEnterprise provider
+* feat(deps): update traefik docker tag to v3.3.4
+* test(Traefik Proxy): fix metrics header labels
+* fix(chart): reorder source urls annotations
+* docs(Traefik Proxy): fix VALUES.md generation on prometheus values
+* chore(release): 🚀 publish v34.4.1
+
+### Default value changes
+
+```diff
+diff --git a/traefik/values.yaml b/traefik/values.yaml
+index 2d8ac73..956000d 100644
+--- a/traefik/values.yaml
++++ b/traefik/values.yaml
+@@ -394,25 +394,27 @@ logs:
+         names: {}
+ 
+ metrics:
+-  ## -- Enable metrics for internal resources. Default: false
++  # -- Enable metrics for internal resources. Default: false
+   addInternals: false
+ 
+-  ## -- Prometheus is enabled by default.
+-  ## -- It can be disabled by setting "prometheus: null"
++  ## Prometheus is enabled by default.
++  ## It can be disabled by setting "prometheus: null"
+   prometheus:
+     # -- Entry point used to expose metrics.
+     entryPoint: metrics
+-    ## Enable metrics on entry points. Default: true
++    # -- Enable metrics on entry points. Default: true
+     addEntryPointsLabels:  # @schema type:[boolean, null]
+-    ## Enable metrics on routers. Default: false
++    # -- Enable metrics on routers. Default: false
+     addRoutersLabels:  # @schema type:[boolean, null]
+-    ## Enable metrics on services. Default: true
++    # -- Enable metrics on services. Default: true
+     addServicesLabels:  # @schema type:[boolean, null]
+-    ## Buckets for latency metrics. Default="0.1,0.3,1.2,5.0"
++    # -- Buckets for latency metrics. Default="0.1,0.3,1.2,5.0"
+     buckets: ""
+-    ## When manualRouting is true, it disables the default internal router in
++    # -- When manualRouting is true, it disables the default internal router in
+     ## order to allow creating a custom router for prometheus@internal service.
+     manualRouting: false
++    # -- Add HTTP header labels to metrics. See EXAMPLES.md or upstream doc for usage.
++    headerLabels: {}  # @schema type:[object, null]
+     service:
+       # -- Create a dedicated metrics service to use with ServiceMonitor
+       enabled: false
+@@ -949,6 +951,64 @@ hub:
+     # -- Set to true in order to enable AI Gateway. Requires a valid license token.
+     aigateway: false
+   providers:
++    consulCatalogEnterprise:
++      # -- Enable Consul Catalog Enterprise backend with default settings.
++      enabled: false
++      # -- Use local agent caching for catalog reads.
++      cache: false
++      # -- Enable Consul Connect support.
++      connectAware: false
++      # -- Consider every service as Connect capable by default.
++      connectByDefault: false
++      # -- Constraints is an expression that Traefik matches against the container's labels
++      constraints: ""
++      # -- Default rule.
++      defaultRule: "Host(`{{ normalize .Name }}`)"
++      endpoint:
++        # -- The address of the Consul server
++        address: ""
++        # -- Data center to use. If not provided, the default agent data center is used
++        datacenter: ""
++        # -- WaitTime limits how long a Watch will block. If not provided, the agent default
++        endpointWaitTime: 0
++        httpauth:
++          # -- Basic Auth password
++          password: ""
++          # -- Basic Auth username
++          username: ""
++        # -- The URI scheme for the Consul server
++        scheme: ""
++        tls:
++          # -- TLS CA
++          ca: ""
++          # -- TLS cert
++          cert: ""
++          # -- TLS insecure skip verify
++          insecureSkipVerify: false
++          # -- TLS key
++          key: ""
++        # -- Token is used to provide a per-request ACL token which overrides the agent's
++        token: ""
++      # -- Expose containers by default.
++      exposedByDefault: true
++      # -- Sets the namespaces used to discover services (Consul Enterprise only).
++      namespaces: ""
++      # -- Sets the partition used to discover services (Consul Enterprise only).
++      partition: ""
++      # -- Prefix for consul service tags.
++      prefix: "traefik"
++      # -- Interval for check Consul API.
++      refreshInterval: 15
++      # -- Forces the read to be fully consistent.
++      requireConsistent: false
++      # -- Name of the Traefik service in Consul Catalog (needs to be registered via the
++      serviceName: "traefik"
++      # -- Use stale consistency for catalog reads.
++      stale: false
++      # -- A list of service health statuses to allow taking traffic.
++      strictChecks: "passing, warning"
++      # -- Watch Consul API events.
++      watch: false
+     microcks:
+       # -- Enable Microcks provider.
+       enabled: false
+@@ -1007,6 +1067,7 @@ hub:
+       insecureSkipVerify: false
+   # Enable export of errors logs to the platform. Default: true.
+   sendlogs:  # @schema type:[boolean, null]
++
+   tracing:
+     # -- Tracing headers to duplicate.
+     # To configure the following, tracing.otlp.enabled needs to be set to true.
+```
+
+## 34.4.0  ![AppVersion: v3.3.3](https://img.shields.io/static/v1?label=AppVersion&message=v3.3.3&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
+
+**Release date:** 2025-02-19
+
+* feat(CRDs): update Traefik Hub CRDs to v1.17.0
+* chore(release): 🚀 publish v34.4.0 and CRDs v1.4.0
+
 ## 34.3.0  ![AppVersion: v3.3.3](https://img.shields.io/static/v1?label=AppVersion&message=v3.3.3&color=success&logo=) ![Kubernetes: >=1.22.0-0](https://img.shields.io/static/v1?label=Kubernetes&message=%3E%3D1.22.0-0&color=informational&logo=kubernetes) ![Helm: v3](https://img.shields.io/static/v1?label=Helm&message=v3&color=informational&logo=helm)
 
 * fix(Traefik Hub): AIServices are available in API Gateway
