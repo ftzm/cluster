@@ -34,6 +34,7 @@
         yq-go
         jq
         just
+        renovate
       ];
     };
   };
