@@ -102,7 +102,7 @@ kubectl port-forward $(kubectl get pods --selector "app.kubernetes.io/name=traef
 
 This command makes the dashboard accessible on the url: http://127.0.0.1:8080/dashboard/
 
-# Redirect permanently traffic from http to https
+# Redirect permanently traffic from http to https
 
 It's possible to redirect all incoming requests on an entrypoint to an other entrypoint.
 
@@ -855,6 +855,9 @@ metrics:
       jobLabel: traefik
       interval: 30s
       honorLabels: true
+    headerLabels:
+      user_id: X-User-Id
+      tenant: X-Tenant
     prometheusRule:
       enabled: true
       rules:
@@ -1046,3 +1049,22 @@ spec:
 Once it's applied, whoami should be accessible on https://whoami.docker.localhost/
 
 </details>
+
+# Use templating for additionalVolumeMounts
+
+This example demonstrates how to use templating for the `additionalVolumeMounts` configuration to dynamically set the `subPath` parameter based on a variable.
+
+```yaml
+additionalVolumeMounts:
+  - name: plugin-volume
+    mountPath: /plugins
+    subPath: "{{ .Values.pluginVersion }}"
+```
+
+In your `values.yaml` file, you can specify the `pluginVersion` variable:
+
+```yaml
+pluginVersion: "v1.2.3"
+```
+
+This configuration will mount the `plugin-volume` at `/plugins` with the `subPath` set to `v1.2.3`.

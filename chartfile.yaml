@@ -11,6 +11,6 @@ requires:
   - chart: nfs-subdir-external-provisioner/nfs-subdir-external-provisioner
     version: "4.0.18"
   - chart: traefik/traefik
-    version: "34.3.0"
+    version: "34.5.0"
   - chart: argo/argo-cd
     version: "9.4.1"
