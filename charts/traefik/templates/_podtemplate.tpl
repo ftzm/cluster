@@ -1,5 +1,5 @@
 {{- define "traefik.podTemplate" }}
-  {{- $version := include "imageVersion" $ }}
+  {{- $version := include "traefik.proxyVersion" $ }}
     metadata:
       annotations:
       {{- if .Values.deployment.podAnnotations }}
@@ -16,6 +16,13 @@
       {{- include "traefik.labels" . | nindent 8 -}}
       {{- with .Values.deployment.podLabels }}
       {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.global.azure.enabled }}
+        azure-extensions-usage-release-identifier: {{ .Release.Name }}
+      {{- end }}
+      {{- if and .Values.hub.token .Values.hub.apimanagement.enabled .Values.hub.apimanagement.admission.restartOnCertificateChange }}
+        {{- $cert := include "traefik-hub.webhook_cert" . | fromYaml }}
+        hub-cert-hash: {{ $cert.Hash }}
       {{- end }}
     spec:
       {{- with .Values.deployment.imagePullSecrets }}
@@ -108,7 +115,7 @@
               {{- fail "ERROR: All hostPort must match their respective containerPort when `hostNetwork` is enabled" }}
             {{- end }}
           {{- end }}
-        - name: {{ $name | lower | quote }}
+        - name: {{ include "traefik.portname" $name }}
           containerPort: {{ default $config.port $config.containerPort }}
           {{- if $config.hostPort }}
           hostPort: {{ $config.hostPort }}
@@ -116,9 +123,9 @@
           {{- if $config.hostIP }}
           hostIP: {{ $config.hostIP }}
           {{- end }}
-          protocol: {{ default "TCP" $config.protocol | quote }}
+          protocol: {{ default "TCP" $config.protocol }}
           {{- if ($config.http3).enabled }}
-        - name: "{{ $name }}-http3"
+        - name: {{ printf "%s-http3" $name | include "traefik.portname" }}
           containerPort: {{ $config.port }}
            {{- if $config.hostPort }}
           hostPort: {{ default $config.hostPort $config.http3.advertisedPort }}
@@ -128,10 +135,12 @@
          {{- end }}
         {{- end }}
         {{- if .Values.hub.token }}
+          {{- if not .Values.hub.offline }}
           {{- $listenAddr := default ":9943" .Values.hub.apimanagement.admission.listenAddr }}
         - name: admission
           containerPort: {{ last (mustRegexSplit ":" $listenAddr 2) }}
           protocol: TCP
+          {{- end }}
           {{- if .Values.hub.apimanagement.enabled }}
         - name: apiportal
           containerPort: 9903
@@ -150,9 +159,8 @@
             {{- end }}
           - name: tmp
             mountPath: /tmp
-          {{- $root := . }}
           {{- range .Values.volumes }}
-          - name: {{ tpl (.name) $root | replace "." "-" }}
+          - name: {{ tpl (.name) $ | replace "." "-" }}
             mountPath: {{ .mountPath }}
             readOnly: true
           {{- end }}
@@ -165,13 +173,34 @@
             mountPath: "/etc/traefik/dynamic"
           {{- end }}
           {{- if .Values.additionalVolumeMounts }}
-            {{- toYaml .Values.additionalVolumeMounts | nindent 10 }}
+            {{- tpl (toYaml .Values.additionalVolumeMounts) . | nindent 10 }}
           {{- end }}
+          {{- range $localPluginName, $localPlugin := .Values.experimental.localPlugins }}
+            {{- $pluginType := include "traefik.getLocalPluginType" (dict "plugin" $localPlugin "pluginName" $localPluginName) }}
+            {{- if eq $pluginType "localPath" }}
+              {{- $localPathConfig := include "traefik.getLocalPluginLocalPath" (dict "plugin" $localPlugin) | fromYaml }}
+          - name: {{ $localPathConfig.volumeName }}
+            mountPath: {{ $localPlugin.mountPath | quote }}
+              {{- if $localPathConfig.subPath }}
+            subPath: {{ $localPathConfig.subPath }}
+              {{- end }}
+            {{- else }}
+          - name: {{ $localPluginName | replace "." "-" }}
+            mountPath: {{ $localPlugin.mountPath | quote }}
+              {{- if eq $pluginType "inlinePlugin" }}
+            readOnly: true
+              {{- end }}
+            {{- end }}
+          {{- end }}
+
         args:
-          {{- with .Values.globalArguments }}
-          {{- range . }}
-          - {{ . | quote }}
-          {{- end }}
+          {{- with .Values.global }}
+           {{- if not .checkNewVersion }}
+          - "--global.checkNewVersion=false"
+           {{- end }}
+           {{- if .sendAnonymousUsage }}
+          - "--global.sendAnonymousUsage"
+           {{- end }}
           {{- end }}
           {{- range $name, $config := .Values.ports }}
            {{- if $config }}
@@ -179,9 +208,30 @@
             {{- with $config.asDefault }}
           - "--entryPoints.{{$name}}.asDefault={{ . }}"
             {{- end }}
+            {{- with $config.observability }}
+              {{- if ne .accessLogs nil }}
+          - "--entryPoints.{{$name}}.observability.accessLogs={{ .accessLogs }}"
+              {{- end }}
+              {{- if ne .metrics nil }}
+          - "--entryPoints.{{$name}}.observability.metrics={{ .metrics }}"
+              {{- end }}
+              {{- if ne .tracing nil }}
+          - "--entryPoints.{{$name}}.observability.tracing={{ .tracing }}"
+              {{- end }}
+              {{- if ne .traceVerbosity nil }}
+          - "--entryPoints.{{$name}}.observability.traceVerbosity={{ .traceVerbosity }}"
+              {{- end }}
+            {{- end }}
            {{- end }}
           {{- end }}
+          {{- if .Values.api.dashboard }}
           - "--api.dashboard=true"
+          {{- else if .Values.ingressRoute.dashboard.enabled }}
+            {{- fail "ERROR: Cannot create an IngressRoute for the dashboard without enabling api.dashboard" -}}
+          {{- end }}
+          {{- with .Values.api.basePath }}
+          - "--api.basePath={{ . }}"
+          {{- end }}
           - "--ping=true"
 
           {{- with .Values.core }}
@@ -272,6 +322,11 @@
           {{- if .Values.metrics.prometheus.manualRouting }}
           - "--metrics.prometheus.manualrouting=true"
           {{- end }}
+          {{- if .Values.metrics.prometheus.headerLabels }}
+          {{- range $label, $headerKey := .Values.metrics.prometheus.headerLabels }}
+          - "--metrics.prometheus.headerlabels.{{ $label }}={{ $headerKey }}"
+          {{- end }}
+          {{- end }}
           {{- end }}
           {{- with .Values.metrics.statsd }}
           - "--metrics.statsd=true"
@@ -300,82 +355,36 @@
           {{- end }}
 
           {{- with .Values.metrics.otlp }}
-          {{- if .enabled }}
-          - "--metrics.otlp=true"
-           {{- if ne .addEntryPointsLabels nil }}
-            {{- with .addEntryPointsLabels | toString }}
+           {{- include "traefik.oltpCommonParams" (dict "path" "metrics.otlp" "oltp" .) | nindent 8 }}
+           {{- if .enabled }}
+             {{- if ne .addEntryPointsLabels nil }}
+              {{- with .addEntryPointsLabels | toString }}
           - "--metrics.otlp.addEntryPointsLabels={{ . }}"
-            {{- end }}
-           {{- end }}
-           {{- if ne .addRoutersLabels nil }}
-            {{- with .addRoutersLabels | toString }}
+              {{- end }}
+             {{- end }}
+             {{- if ne .addRoutersLabels nil }}
+              {{- with .addRoutersLabels | toString }}
           - "--metrics.otlp.addRoutersLabels={{ . }}"
-            {{- end }}
-           {{- end }}
-           {{- if ne .addServicesLabels nil }}
-            {{- with .addServicesLabels | toString }}
+              {{- end }}
+             {{- end }}
+             {{- if ne .addServicesLabels nil }}
+              {{- with .addServicesLabels | toString }}
           - "--metrics.otlp.addServicesLabels={{ . }}"
-            {{- end }}
-           {{- end }}
-           {{- with .explicitBoundaries }}
+              {{- end }}
+             {{- end }}
+             {{- with .explicitBoundaries }}
           - "--metrics.otlp.explicitBoundaries={{ join "," . }}"
-           {{- end }}
-           {{- with .pushInterval }}
+             {{- end }}
+             {{- with .pushInterval }}
           - "--metrics.otlp.pushInterval={{ . }}"
+             {{- end }}
            {{- end }}
-           {{- with .http }}
-            {{- if .enabled }}
-          - "--metrics.otlp.http=true"
-             {{- with .endpoint }}
-          - "--metrics.otlp.http.endpoint={{ . }}"
-             {{- end }}
-             {{- range $name, $value := .headers }}
-          - "--metrics.otlp.http.headers.{{ $name }}={{ $value }}"
-             {{- end }}
-             {{- with .tls }}
-              {{- with .ca }}
-          - "--metrics.otlp.http.tls.ca={{ . }}"
-              {{- end }}
-              {{- with .cert }}
-          - "--metrics.otlp.http.tls.cert={{ . }}"
-              {{- end }}
-              {{- with .key }}
-          - "--metrics.otlp.http.tls.key={{ . }}"
-              {{- end }}
-              {{- with .insecureSkipVerify }}
-          - "--metrics.otlp.http.tls.insecureSkipVerify={{ . }}"
-              {{- end }}
-             {{- end }}
-            {{- end }}
-           {{- end }}
-           {{- with .grpc }}
-            {{- if .enabled }}
-          - "--metrics.otlp.grpc=true"
-             {{- with .endpoint }}
-          - "--metrics.otlp.grpc.endpoint={{ . }}"
-             {{- end }}
-             {{- with .insecure }}
-          - "--metrics.otlp.grpc.insecure={{ . }}"
-             {{- end }}
-             {{- range $name, $value := .headers }}
-          - "--metrics.otlp.grpc.headers.{{ $name }}={{ $value }}"
-             {{- end }}
-             {{- with .tls }}
-              {{- with .ca }}
-          - "--metrics.otlp.grpc.tls.ca={{ . }}"
-              {{- end }}
-              {{- with .cert }}
-          - "--metrics.otlp.grpc.tls.cert={{ . }}"
-              {{- end }}
-              {{- with .key }}
-          - "--metrics.otlp.grpc.tls.key={{ . }}"
-              {{- end }}
-              {{- with .insecureSkipVerify }}
-          - "--metrics.otlp.grpc.tls.insecureSkipVerify={{ . }}"
-              {{- end }}
-             {{- end }}
-            {{- end }}
-           {{- end }}
+          {{- end }}
+
+          {{- if .Values.ocsp.enabled }}
+          - "--ocsp=true"
+          {{- if $.Values.ocsp.responderOverrides -}}
+          {{- include "traefik.yaml2CommandLineArgs" (dict "path" "ocsp.responderOverrides" "content" $.Values.ocsp.responderOverrides) | nindent 10 }}
           {{- end }}
           {{- end }}
 
@@ -384,8 +393,8 @@
           {{- end }}
 
           {{- with .Values.tracing }}
-            {{- with .sampleRate }}
-          - "--tracing.sampleRate={{ . }}"
+            {{- if ne .sampleRate nil }}
+          - "--tracing.sampleRate={{ .sampleRate }}"
             {{- end }}
 
             {{- with .serviceName }}
@@ -396,77 +405,22 @@
           - "--tracing.resourceAttributes.{{ $name }}={{ $value }}"
             {{- end }}
 
-            {{- range $index, $value := .capturedRequestHeaders }}
-          - "--tracing.capturedRequestHeaders[{{ $index }}]={{ $value }}"
+            {{- if .capturedRequestHeaders }}
+          - "--tracing.capturedRequestHeaders={{ .capturedRequestHeaders | join "," }}"
             {{- end }}
 
-            {{- range $index, $value := .capturedResponseHeaders }}
-          - "--tracing.capturedResponseHeaders[{{ $index }}]={{ $value }}"
+            {{- if .capturedResponseHeaders }}
+          - "--tracing.capturedResponseHeaders={{ .capturedResponseHeaders | join "," }}"
             {{- end }}
 
             {{- if .safeQueryParams }}
-          - "--tracing.safeQueryParams={{- .safeQueryParams | join "," -}}"
+          - "--tracing.safeQueryParams={{ .safeQueryParams | join "," }}"
             {{- end }}
 
           {{- end }}
 
           {{- with .Values.tracing.otlp }}
-          {{- if .enabled }}
-          - "--tracing.otlp=true"
-           {{- with .http }}
-            {{- if .enabled }}
-          - "--tracing.otlp.http=true"
-             {{- with .endpoint }}
-          - "--tracing.otlp.http.endpoint={{ . }}"
-             {{- end }}
-             {{- range $name, $value := .headers }}
-          - "--tracing.otlp.http.headers.{{ $name }}={{ $value }}"
-             {{- end }}
-             {{- with .tls }}
-              {{- with .ca }}
-          - "--tracing.otlp.http.tls.ca={{ . }}"
-              {{- end }}
-              {{- with .cert }}
-          - "--tracing.otlp.http.tls.cert={{ . }}"
-              {{- end }}
-              {{- with .key }}
-          - "--tracing.otlp.http.tls.key={{ . }}"
-              {{- end }}
-              {{- with .insecureSkipVerify }}
-          - "--tracing.otlp.http.tls.insecureSkipVerify={{ . }}"
-              {{- end }}
-             {{- end }}
-            {{- end }}
-           {{- end }}
-           {{- with .grpc }}
-            {{- if .enabled }}
-          - "--tracing.otlp.grpc=true"
-             {{- with .endpoint }}
-          - "--tracing.otlp.grpc.endpoint={{ . }}"
-             {{- end }}
-             {{- with .insecure }}
-          - "--tracing.otlp.grpc.insecure={{ . }}"
-             {{- end }}
-             {{- range $name, $value := .headers }}
-          - "--tracing.otlp.grpc.headers.{{ $name }}={{ $value }}"
-             {{- end }}
-             {{- with .tls }}
-              {{- with .ca }}
-          - "--tracing.otlp.grpc.tls.ca={{ . }}"
-              {{- end }}
-              {{- with .cert }}
-          - "--tracing.otlp.grpc.tls.cert={{ . }}"
-              {{- end }}
-              {{- with .key }}
-          - "--tracing.otlp.grpc.tls.key={{ . }}"
-              {{- end }}
-              {{- with .insecureSkipVerify }}
-          - "--tracing.otlp.grpc.tls.insecureSkipVerify={{ . }}"
-              {{- end }}
-             {{- end }}
-            {{- end }}
-           {{- end }}
-          {{- end }}
+           {{- include "traefik.oltpCommonParams" (dict "path" "tracing.otlp" "oltp" .) | nindent 8 }}
           {{- end }}
           {{- with .Values.experimental.fastProxy }}
             {{- if .enabled }}
@@ -476,13 +430,36 @@
           - "--experimental.fastProxy.debug"
             {{- end }}
           {{- end }}
+          {{- if .Values.experimental.otlpLogs }}
+          - "--experimental.otlpLogs=true"
+          {{- end }}
           {{- range $pluginName, $plugin := .Values.experimental.plugins }}
           {{- if or (ne (typeOf $plugin) "map[string]interface {}") (not (hasKey $plugin "moduleName")) (not (hasKey $plugin "version")) }}
-            {{- fail  (printf "ERROR: plugin %s is missing moduleName/version keys !" $pluginName) }}
+            {{- fail  (printf "ERROR: plugin %s is missing moduleName/version keys!" $pluginName) }}
           {{- end }}
           - "--experimental.plugins.{{ $pluginName }}.moduleName={{ $plugin.moduleName }}"
           - "--experimental.plugins.{{ $pluginName }}.version={{ $plugin.version }}"
+           {{- if hasKey $plugin "hash" }}
+          - "--experimental.plugins.{{ $pluginName }}.hash={{ $plugin.hash }}"
+           {{- end }}
+           {{- $settings := (get $plugin "settings") | default dict }}
+           {{- $useUnsafe := (get $settings "useUnsafe") | default false }}
+           {{- if $useUnsafe }}
+          - "--experimental.plugins.{{ $pluginName }}.settings.useUnsafe=true"
+           {{- end }}
           {{- end }}
+          {{- range $localPluginName, $localPlugin := .Values.experimental.localPlugins }}
+          {{- if not (hasKey $localPlugin "moduleName") }}
+            {{- fail  (printf "ERROR: local plugin %s is missing moduleName!" $localPluginName) }}
+          {{- end }}
+          - "--experimental.localPlugins.{{ $localPluginName }}.moduleName={{ $localPlugin.moduleName }}"
+           {{- $settings := (get $localPlugin "settings") | default dict }}
+           {{- $useUnsafe := (get $settings "useUnsafe") | default false }}
+           {{- if $useUnsafe }}
+          - "--experimental.localPlugins.{{ $localPluginName }}.settings.useUnsafe=true"
+           {{- end }}
+          {{- end }}
+
           {{- if and (semverCompare ">=v3.3.0-0" $version) (.Values.experimental.abortOnPluginFailure)}}
           - "--experimental.abortonpluginfailure={{ .Values.experimental.abortOnPluginFailure }}"
           {{- end }}
@@ -522,7 +499,7 @@
           - "--providers.kubernetesingress.allowEmptyServices={{ . }}"
             {{- end }}
            {{- end }}
-           {{- if and .Values.service.enabled .Values.providers.kubernetesIngress.publishedService.enabled }}
+           {{- if or (and .Values.service.enabled .Values.providers.kubernetesIngress.publishedService.enabled) (and .Values.providers.kubernetesIngress.publishedService.enabled .Values.providers.kubernetesIngress.publishedService.pathOverride)}}
           - "--providers.kubernetesingress.ingressendpoint.publishedservice={{ template "providers.kubernetesIngress.publishedServicePath" . }}"
            {{- end }}
            {{- if .Values.providers.kubernetesIngress.labelSelector }}
@@ -544,9 +521,15 @@
            {{- if .Values.providers.kubernetesIngress.nativeLBByDefault }}
           - "--providers.kubernetesingress.nativeLBByDefault=true"
            {{- end }}
+           {{- if .Values.providers.kubernetesIngress.strictPrefixMatching }}
+          - "--providers.kubernetesingress.strictPrefixMatching=true"
+           {{- end }}
           {{- end }}
           {{- if .Values.experimental.kubernetesGateway.enabled }}
           - "--experimental.kubernetesgateway"
+          {{- end }}
+          {{- if .Values.experimental.knative }}
+          - "--experimental.knative"
           {{- end }}
           {{- with .Values.providers.kubernetesCRD }}
           {{- if (and .enabled (or .namespaces (and $.Values.rbac.enabled $.Values.rbac.namespaced))) }}
@@ -577,8 +560,8 @@
             {{- if .experimentalChannel }}
           - "--providers.kubernetesgateway.experimentalchannel=true"
             {{- end }}
-            {{- with .labelselector }}
-          - "--providers.kubernetesgateway.labelselector={{ . }}"
+            {{- with .labelSelector }}
+          - "--providers.kubernetesgateway.labelSelector={{ . }}"
             {{- end }}
            {{- end }}
           {{- end }}
@@ -595,63 +578,123 @@
           {{- end }}
           {{- end }}
           {{- end }}
+          {{- with .Values.providers.kubernetesIngressNginx }}
+           {{- if .enabled }}
+          - "--providers.kubernetesingressnginx"
+            {{- with .controllerClass }}
+          - "--providers.kubernetesingressnginx.controllerclass={{ . }}"
+            {{- end }}
+            {{- with .ingressClass }}
+          - "--providers.kubernetesingressnginx.ingressclass={{ . }}"
+            {{- end }}
+            {{- if .ingressClassByName }}
+          - "--providers.kubernetesingressnginx.ingressclassbyname=true"
+            {{- end }}
+            {{- if .watchIngressWithoutClass }}
+          - "--providers.kubernetesingressnginx.watchingresswithoutclass=true"
+            {{- end }}
+            {{- if or .watchNamespace (and $.Values.rbac.enabled $.Values.rbac.namespaced) }}
+          - "--providers.kubernetesingressnginx.watchnamespace={{ template "providers.kubernetesIngressNginx.namespaces" $ }}"
+            {{- end }}
+            {{- with .watchNamespaceSelector }}
+          - "--providers.kubernetesingressnginx.watchnamespaceselector={{ . }}"
+            {{- end }}
+            {{- if and $.Values.service.enabled .publishService.enabled }}
+          - "--providers.kubernetesingressnginx.publishservice={{ template "providers.kubernetesIngressNginx.publishServicePath" $ }}"
+            {{- end }}
+            {{- with .publishStatusAddress }}
+          - "--providers.kubernetesingressnginx.publishstatusaddress={{ . }}"
+            {{- end }}
+            {{- with .defaultBackendService }}
+          - "--providers.kubernetesingressnginx.defaultbackendservice={{ . }}"
+            {{- end }}
+            {{- if .disableSvcExternalName }}
+          - "--providers.kubernetesingressnginx.disablesvcexternalname=true"
+            {{- end }}
+            {{- with .throttleDuration }}
+          - "--providers.kubernetesingressnginx.throttleduration={{ . }}"
+            {{- end }}
+            {{- with .certAuthFilePath }}
+          - "--providers.kubernetesingressnginx.certauthfilepath={{ . }}"
+            {{- end }}
+            {{- with .endpoint }}
+          - "--providers.kubernetesingressnginx.endpoint={{ . }}"
+            {{- end }}
+            {{- with .token }}
+          - "--providers.kubernetesingressnginx.token={{ . }}"
+            {{- end }}
+           {{- end }}
+          {{- end }}
+          {{- with .Values.providers.knative }}
+           {{- if .enabled }}
+          - "--providers.knative"
+            {{- if or .namespaces (and $.Values.rbac.enabled $.Values.rbac.namespaced) }}
+          - "--providers.knative.namespaces={{ template "providers.knative.namespaces" $ }}"
+            {{- end }}
+            {{- with .labelSelector }}
+          - "--providers.knative.labelSelector={{ . }}"
+            {{- end }}
+           {{- end }}
+          {{- end }}
           {{- range $entrypoint, $config := $.Values.ports }}
           {{- if $config }}
-            {{- if $config.redirectTo }}
-              {{- fail "ERROR: redirectTo syntax has been removed in v34 of this Chart. See Release notes or EXAMPLES.md for new syntax." -}}
-            {{- end }}
-            {{- if $config.redirections }}
-             {{- with $config.redirections.entryPoint }}
-              {{- if not (hasKey $.Values.ports .to) }}
-                {{- $errorMsg := printf "ERROR: Cannot redirect %s to %s: entryPoint not found" $entrypoint .to }}
-                {{- fail $errorMsg }}
+            {{- with $config.http }}
+              {{- include "traefik.yaml2CommandLineArgs" (dict "path" (printf "entryPoints.%s.http.encodedCharacters" $entrypoint) "content" .encodedCharacters) | nindent 10 }}
+              {{- with .maxHeaderBytes }}
+          - "--entryPoints.{{ $entrypoint }}.http.maxHeaderBytes={{ . | int64 }}"
               {{- end }}
-              {{- $toPort := index $.Values.ports .to }}
-              {{- if and (($toPort.tls).enabled) (ne .scheme "https") }}
-                {{- $errorMsg := printf "ERROR: Cannot redirect %s to %s without setting scheme to https" $entrypoint .to }}
-                {{- fail $errorMsg }}
+              {{- with .middlewares }}
+          - "--entryPoints.{{ $entrypoint }}.http.middlewares={{ join "," . }}"
               {{- end }}
+              {{- with (.redirections).entryPoint }}
+               {{- if not (hasKey $.Values.ports .to) }}
+                 {{- $errorMsg := printf "ERROR: Cannot redirect %s to %s: entryPoint not found" $entrypoint .to }}
+                 {{- fail $errorMsg }}
+               {{- end }}
+               {{- $toPort := index $.Values.ports .to }}
+               {{- if and (((($toPort).http).tls).enabled) .scheme (ne .scheme "https") }}
+                 {{- $errorMsg := printf "ERROR: Cannot redirect %s to %s without setting scheme to https" $entrypoint .to }}
+                 {{- fail $errorMsg }}
+               {{- end }}
           - "--entryPoints.{{ $entrypoint }}.http.redirections.entryPoint.to=:{{ $toPort.exposedPort }}"
-              {{- with .scheme }}
+               {{- with .scheme }}
           - "--entryPoints.{{ $entrypoint }}.http.redirections.entryPoint.scheme={{ . }}"
-              {{- end }}
-              {{- with .priority }}
+               {{- end }}
+               {{- with .priority }}
           - "--entryPoints.{{ $entrypoint }}.http.redirections.entryPoint.priority={{ . }}"
-              {{- end }}
-              {{- if hasKey . "permanent" }}
+               {{- end }}
+               {{- if hasKey . "permanent" }}
           - "--entryPoints.{{ $entrypoint }}.http.redirections.entryPoint.permanent={{ .permanent }}"
+               {{- end }}
               {{- end }}
-             {{- end }}
-            {{- end }}
-            {{- if $config.middlewares }}
-          - "--entryPoints.{{ $entrypoint }}.http.middlewares={{ join "," $config.middlewares }}"
-            {{- end }}
-            {{- if $config.tls }}
-              {{- if $config.tls.enabled }}
+              {{- if ne .sanitizePath nil }}
+               {{- with .sanitizePath | toString }}
+          - "--entryPoints.{{ $entrypoint }}.http.sanitizePath={{ . }}"
+               {{- end }}
+              {{- end }}
+              {{- if (.tls).enabled }}
           - "--entryPoints.{{ $entrypoint }}.http.tls=true"
-                {{- if $config.tls.options }}
-          - "--entryPoints.{{ $entrypoint }}.http.tls.options={{ $config.tls.options }}"
+                {{- with .tls.options }}
+          - "--entryPoints.{{ $entrypoint }}.http.tls.options={{ . }}"
                 {{- end }}
-                {{- if $config.tls.certResolver }}
-          - "--entryPoints.{{ $entrypoint }}.http.tls.certResolver={{ $config.tls.certResolver }}"
+                {{- with .tls.certResolver }}
+          - "--entryPoints.{{ $entrypoint }}.http.tls.certResolver={{ . }}"
                 {{- end }}
-                {{- if $config.tls.domains }}
-                  {{- range $index, $domain := $config.tls.domains }}
-                    {{- if $domain.main }}
-          - "--entryPoints.{{ $entrypoint }}.http.tls.domains[{{ $index }}].main={{ $domain.main }}"
-                    {{- end }}
-                    {{- if $domain.sans }}
-          - "--entryPoints.{{ $entrypoint }}.http.tls.domains[{{ $index }}].sans={{ join "," $domain.sans }}"
-                    {{- end }}
+                {{- range $index, $domain := .tls.domains }}
+                  {{- with $domain.main }}
+          - "--entryPoints.{{ $entrypoint }}.http.tls.domains[{{ $index }}].main={{ . }}"
+                  {{- end }}
+                  {{- with $domain.sans }}
+          - "--entryPoints.{{ $entrypoint }}.http.tls.domains[{{ $index }}].sans={{ join "," . }}"
                   {{- end }}
                 {{- end }}
-                {{- if $config.http3 }}
-                  {{- if $config.http3.enabled }}
+              {{- end }}
+            {{- end }}
+            {{- with $config.http3 }}
+              {{- if .enabled }}
           - "--entryPoints.{{ $entrypoint }}.http3"
-                    {{- if $config.http3.advertisedPort }}
-          - "--entryPoints.{{ $entrypoint }}.http3.advertisedPort={{ $config.http3.advertisedPort }}"
-                    {{- end }}
-                  {{- end }}
+                {{- with .advertisedPort }}
+          - "--entryPoints.{{ $entrypoint }}.http3.advertisedPort={{ . }}"
                 {{- end }}
               {{- end }}
             {{- end }}
@@ -707,9 +750,6 @@
           {{- end }}
           {{- end }}
           {{- with .Values.logs }}
-            {{- if and .general.format (not (has .general.format (list "common" "json"))) }}
-              {{- fail "ERROR: .Values.logs.general.format must be either common or json"  }}
-            {{- end }}
             {{- with .general.format }}
           - "--log.format={{ . }}"
             {{- end }}
@@ -721,6 +761,9 @@
             {{- end }}
             {{- with .general.level }}
           - "--log.level={{ . | upper }}"
+            {{- end }}
+            {{- with .general.otlp }}
+             {{- include "traefik.oltpCommonParams" (dict "path" "log.otlp" "oltp" .) | nindent 8 }}
             {{- end }}
             {{- if .access.enabled }}
           - "--accesslog=true"
@@ -735,6 +778,9 @@
               {{- end }}
               {{- with .access.bufferingSize }}
           - "--accesslog.bufferingsize={{ . }}"
+              {{- end }}
+              {{- if .access.timezone }}
+          - "--accesslog.fields.names.StartUTC=drop"
               {{- end }}
               {{- with .access.filters }}
                 {{- with .statuscodes }}
@@ -755,9 +801,14 @@
               {{- range $fieldname, $fieldaction := .access.fields.headers.names }}
           - "--accesslog.fields.headers.names.{{ $fieldname }}={{ $fieldaction }}"
               {{- end }}
+              {{- with .access.otlp }}
+                {{- include "traefik.oltpCommonParams" (dict "path" "accesslog.otlp" "oltp" .) | nindent 8 }}
+              {{- end }}
             {{- end }}
           {{- end }}
+          {{- if $.Values.certificatesResolvers -}}
           {{- include "traefik.yaml2CommandLineArgs" (dict "path" "certificatesresolvers" "content" $.Values.certificatesResolvers) | nindent 10 }}
+          {{- end }}
           {{- with .Values.additionalArguments }}
           {{- range . }}
           - {{ . | quote }}
@@ -769,25 +820,48 @@
             {{- if and (not .apimanagement.enabled) ($.Values.hub.apimanagement.admission.listenAddr) }}
                {{- fail "ERROR: Cannot configure admission without enabling hub.apimanagement" }}
             {{- end }}
+            {{- if ne .offline nil }}
+          - "--hub.offline={{ .offline }}"
+            {{- end }}
+            {{- if .namespaces }}
+          - "--hub.namespaces={{ join "," (uniq (concat (include "traefik.namespace" $ | list) .namespaces)) }}"
+            {{- end }}
             {{- with .apimanagement }}
-             {{- if .enabled }}
+            {{- if .enabled }}
               {{- $listenAddr := default ":9943" .admission.listenAddr }}
           - "--hub.apimanagement"
+              {{- if not $.Values.hub.offline }}
           - "--hub.apimanagement.admission.listenAddr={{ $listenAddr }}"
-              {{- with .admission.secretName }}
+                {{- with .admission.secretName }}
           - "--hub.apimanagement.admission.secretName={{ . }}"
+                {{- end }}
               {{- end }}
               {{- if .openApi.validateRequestMethodAndPath }}
           - "--hub.apiManagement.openApi.validateRequestMethodAndPath=true"
               {{- end }}
              {{- end }}
             {{- end }}
-            {{- if .experimental.aigateway }}
-          - "--hub.experimental.aigateway"
+            {{- with .aigateway }}
+             {{- if .enabled }}
+          - "--hub.aigateway"
+              {{- with .maxRequestBodySize }}
+          - "--hub.aigateway.maxRequestBodySize={{ . | int }}"
+              {{- end }}
+             {{- end }}
             {{- end -}}
-            {{- with .platformUrl }}
+            {{- with .mcpgateway }}
+             {{- if .enabled }}
+          - "--hub.mcpgateway"
+              {{- with .maxRequestBodySize }}
+          - "--hub.mcpgateway.maxRequestBodySize={{ . | int }}"
+              {{- end }}
+             {{- end }}
+            {{- end -}}
+            {{- if not .offline }}
+              {{- with .platformUrl }}
           - "--hub.platformUrl={{ . }}"
-            {{- end -}}
+              {{- end -}}
+            {{- end }}
             {{- range $field, $value := .redis }}
              {{- if has $field (list "cluster" "database" "endpoints" "username" "password" "timeout") -}}
               {{- with $value }}
@@ -809,14 +883,44 @@
               {{- end }}
              {{- end }}
             {{- end }}
-            {{- with .sendlogs }}
+            {{- if ne .sendlogs nil }}
+              {{- with .sendlogs | toString}}
           - "--hub.sendlogs={{ . }}"
+              {{- end }}
             {{- end }}
             {{- if and $.Values.tracing.otlp.enabled .tracing.additionalTraceHeaders.enabled }}
               {{- include "traefik.yaml2CommandLineArgs" (dict "path" "hub.tracing.additionalTraceHeaders.traceContext" "content" $.Values.hub.tracing.additionalTraceHeaders.traceContext) | nindent 10 }}
             {{- end }}
+            {{- if .providers.consulCatalogEnterprise.enabled }}
+              {{- include "traefik.yaml2CommandLineArgs" (dict "path" "hub.providers.consulCatalogEnterprise" "content" (omit $.Values.hub.providers.consulCatalogEnterprise "enabled")) | nindent 10 }}
+            {{- end }}
             {{- if .providers.microcks.enabled }}
               {{- include "traefik.yaml2CommandLineArgs" (dict "path" "hub.providers.microcks" "content" (omit $.Values.hub.providers.microcks "enabled")) | nindent 10 }}
+            {{- end }}
+          {{- end }}
+          {{- with .pluginRegistry.sources }}
+          - "--hub.pluginregistry=true"
+            {{- range $pluginName, $pluginConf := . }}
+          - "--hub.pluginregistry.sources.{{$pluginName}}=true"
+          - "--hub.pluginregistry.sources.{{$pluginName}}.basemodulename={{$pluginConf.baseModuleName}}"
+              {{- with .github }}
+                {{- with .enterprise }}
+                  {{- with .url }}
+          - "--hub.pluginregistry.sources.{{$pluginName}}.github.enterprise.url={{.}}"
+                  {{- end }}
+                {{- end }}
+                {{- with .token }}
+          - "--hub.pluginregistry.sources.{{$pluginName}}.github.token={{.}}"
+                {{- end }}
+              {{- end }}
+              {{- with .gitlab }}
+                {{- with .url }}
+          - "--hub.pluginregistry.sources.{{$pluginName}}.gitlab.url={{.}}"
+                {{- end }}
+                {{- with .token }}
+          - "--hub.pluginregistry.sources.{{$pluginName}}.gitlab.token={{.}}"
+                {{- end }}
+              {{- end }}
             {{- end }}
           {{- end }}
          {{- end }}
@@ -829,6 +933,8 @@
             valueFrom:
               fieldRef:
                 fieldPath: metadata.namespace
+          - name: USER
+            value: traefik
           {{- if ($.Values.resources.limits).cpu }}
           - name: GOMAXPROCS
             valueFrom:
@@ -838,17 +944,18 @@
           {{- end }}
           {{- if ($.Values.resources.limits).memory }}
           - name: GOMEMLIMIT
-            valueFrom:
-              resourceFieldRef:
-                resource: limits.memory
-                divisor: '1'
+            value: {{ include "traefik.gomemlimit" (dict "memory" .Values.resources.limits.memory "percentage" .Values.deployment.goMemLimitPercentage) | quote }}
           {{- end }}
           {{- with .Values.hub.token }}
           - name: HUB_TOKEN
             valueFrom:
               secretKeyRef:
-                name: {{ . }}
+                name: {{ le (len .) 64 | ternary . "traefik-hub-license" }}
                 key: token
+          {{- end }}
+          {{- if .Values.logs.access.timezone }}
+          - name: TZ
+            value: {{ .Values.logs.access.timezone }}
           {{- end }}
         {{- with .Values.env }}
           {{- toYaml . | nindent 10 }}
@@ -870,19 +977,38 @@
           {{- end }}
         - name: tmp
           emptyDir: {}
-        {{- $root := . }}
         {{- range .Values.volumes }}
-        - name: {{ tpl (.name) $root | replace "." "-" }}
+        - name: {{ tpl (.name) $ | replace "." "-" }}
           {{- if eq .type "secret" }}
           secret:
-            secretName: {{ tpl (.name) $root }}
+            secretName: {{ tpl (.name) $ }}
           {{- else if eq .type "configMap" }}
           configMap:
-            name: {{ tpl (.name) $root }}
+            name: {{ tpl (.name) $ }}
           {{- end }}
         {{- end }}
         {{- if .Values.deployment.additionalVolumes }}
           {{- toYaml .Values.deployment.additionalVolumes | nindent 8 }}
+        {{- end }}
+        {{- range $localPluginName, $localPlugin := .Values.experimental.localPlugins }}
+        {{- $pluginType := include "traefik.getLocalPluginType" (dict "plugin" $localPlugin "pluginName" $localPluginName) }}
+        {{- if ne $pluginType "localPath" }}
+        - name: {{ $localPluginName | replace "." "-" }}
+          {{- if eq $pluginType "hostPath" }}
+          {{- $hostPath := include "traefik.getLocalPluginHostPath" (dict "plugin" $localPlugin) }}
+          hostPath:
+            path: {{ $hostPath | quote }}
+          {{- else if eq $pluginType "inlinePlugin" }}
+          configMap:
+            name: {{ include "traefik.localPluginCmName" (dict "context" $ "pluginName" $localPluginName) }}
+          {{- end }}
+        {{- else }}
+        {{- $localPathConfig := include "traefik.getLocalPluginLocalPath" (dict "plugin" $localPlugin) | fromYaml }}
+        {{- $volumeExists := include "traefik.volumeExistsInAdditionalVolumes" (dict "volumeName" $localPathConfig.volumeName "additionalVolumes" $.Values.deployment.additionalVolumes) }}
+        {{- if ne $volumeExists "true" }}
+          {{- fail (printf "ERROR: localPlugin %s references volume '%s' which is not found in deployment.additionalVolumes!" $localPluginName $localPathConfig.volumeName) }}
+        {{- end }}
+        {{- end }}
         {{- end }}
         {{- if and (gt (len .Values.experimental.plugins) 0) (ne (include "traefik.hasPluginsVolume" .Values.deployment.additionalVolumes) "true") }}
         - name: plugins
@@ -913,9 +1039,6 @@
         {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- if .Values.topologySpreadConstraints }}
-      {{- if (semverCompare "<v1.19.0-0" .Capabilities.KubeVersion.Version) }}
-        {{- fail "ERROR: topologySpreadConstraints are supported only on kubernetes >= v1.19" -}}
-      {{- end }}
       topologySpreadConstraints:
         {{- tpl (toYaml .Values.topologySpreadConstraints) . | nindent 8 }}
       {{- end }}
