@@ -133,6 +133,14 @@ local withNamespace(resources, ns) = {
       helm.template('traefik', '../../charts/traefik', {
         namespace: ns,
         values: {
+          // Enable access logs (collected by Alloy -> Loki)
+          logs: {
+            access: {
+              enabled: true,
+              format: 'json',  // Easier to parse in Loki
+            },
+          },
+
           // Use host network to bind directly to specific IPs
           hostNetwork: true,
 
