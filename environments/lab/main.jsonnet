@@ -485,6 +485,28 @@ local withNamespace(resources, ns) = {
       ns
     ),
 
+    // Sealed secret for Grafana admin credentials
+    grafanaAdminSecret: {
+      apiVersion: 'bitnami.com/v1alpha1',
+      kind: 'SealedSecret',
+      metadata: {
+        name: 'grafana-admin',
+        namespace: ns,
+      },
+      spec: {
+        encryptedData: {
+          'admin-password': 'AgAcMAQk1+wFcejscOkHWUqhpiV2Xe4o8zTFMWkxMNpiUkgRe+zxU1iOEiTyjucegxoKrY+1jb5u6geCX/21yF5PI58QVymgGuo5mNdHkPzHKFFUXvgmr0MUQeReFVWo6A1Msyhvnk2wYZLmHIyqPaFJLK5IcRdeTfCry1N8VGVt7bn/2tul4Ka+ahrculnLy4cXEhTj9ciMJeXQFB2D2JvXdZahJM+KuToIYtLp3LnYUJe0LCCpCEaFz6m3n9Q62LXOgVrVAp4kpRzSqS34fVAcGrQ9KUdImsPhH0WKDdmq2yyiXw1Q4O1AjrWnvwUpKkfludvkmt1UyPStyhJ464XrJ8uL3zejX5QS6vWTnQKp0fJpXriEyKWKAeo7pRCjfJWkQ0fO5KnFqke94UVcb7A1ohIivifCej97bK+jELFUgLfFirTTUQcvdmWzj/+9GvD3GFn6PSpNvJQ35xrGb1rw7xcXQ8R5uw2gHmpfAMeqC3rw3NDlkUE8PSauFPAh48TGAcl99oNYZ3Wkt/ubvU5pIBfYOC5YejXcfIwC9BRWvQvEhd+YqX9WsDpmbzk9Tax5aKoRkABgMROTquXPhi1hm+BD2RI6QD46FD+d3L21FK34bWSVQz2QoairWCacSVSiXk+v7lXRCIiAdVk76JXMaeQBM1L4dUAs6C8HMoK7IKm+eFcKQs33MWJmsf94NY7IG1pOB0gCwL/ul2K2CHE3AAkEwJMTjh0NtESgq2Lq6w==',
+          'admin-user': 'AgAwE50JHLsXlT14+/gMcC5/1Zg/nzCAvsg9pYfyHAICf99gJMZeXnVhOpst4Jt13mpwf1OQeEiKaP+Tq2SNYM0LdOywZmthOtVsM3pgzqQzuQfSuVNJ5rLLcArvoWaQh/vNqznFinXtC+9n0iVqQqCduF/iEzsC2p55R5xKLtNlFLE6BS+8N/UyS+E3mmML3WQSEqGbAFg5LcBsQTcx4ET9cGdFpsiKAt0dGiupC3uCrUBn5vybZK9cYqwBZDV2O9C83d9WIAIc9wKsCBu1oLIPXJHSOpbXuDW64i1p2yDbVnAcAR662iq2WMv1eCvXgHdhV0r/k8f2vGOYJy2106GkJc+F5tT5DND8T+mL/j/f2wn5JRa+eIIMvNiZbk55n0pZTorkWKTlZQGg2v3usICNFqaqRdlCmmHXkNVL+3j2DZuP8TUBE6nwrI4nWw3wafmyYVEv8l2DB4EypdhXVR/+R4MC8mRNIABUPpAW1Co9QUUXOFokYU/fMeCHWhGC6mofVNDH+IElzoX11vcXCAErwbOutPemeZNug6eyIJg9k2dl8iSVQCzsfkhxrr5hv+Dq6gdcV8glOvx02QG/vjzeTw4Q/+FCMOX9pwofUbfES3VJZ+gx01j3heD022vaH6YVoeh/rkQXV/dpNMv+AAHWDsJCWn9mEy08UqC32WtkDnau5cuYD0XXrM2xVDcjB/YX1t1s4g==',
+        },
+        template: {
+          metadata: {
+            name: 'grafana-admin',
+            namespace: ns,
+          },
+        },
+      },
+    },
+
     // Traefik IngressRoute for Grafana (private/WireGuard only)
     grafanaIngress: {
       apiVersion: 'traefik.io/v1alpha1',
