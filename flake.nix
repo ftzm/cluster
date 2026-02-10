@@ -35,6 +35,11 @@
         jq
         just
         renovate
+
+        # Secrets management
+        sops
+        age
+        kubeseal
       ];
     };
   };

@@ -23,7 +23,6 @@ spec:
       annotations:
         checksum/config: 5bceeca3808849664f09f642547ce17fdf495522238ef9ce952b20cfa36b7de5
         checksum/sc-dashboard-provider-config: e70bf6a851099d385178a76de9757bb0bef8299da6d8443602590e44f05fdf24
-        checksum/secret: 5aed1e68c34cd928bdd9fb58ef70daf8529a4bc91af3e9bfcfd4583326978bb2
         kubectl.kubernetes.io/default-container: grafana
       labels:
         app.kubernetes.io/instance: kube-prometheus-stack
@@ -50,12 +49,12 @@ spec:
           valueFrom:
             secretKeyRef:
               key: admin-user
-              name: kube-prometheus-stack-grafana
+              name: grafana-admin
         - name: REQ_PASSWORD
           valueFrom:
             secretKeyRef:
               key: admin-password
-              name: kube-prometheus-stack-grafana
+              name: grafana-admin
         - name: REQ_URL
           value: http://localhost:3000/api/admin/provisioning/dashboards/reload
         - name: REQ_METHOD
@@ -88,12 +87,12 @@ spec:
           valueFrom:
             secretKeyRef:
               key: admin-user
-              name: kube-prometheus-stack-grafana
+              name: grafana-admin
         - name: REQ_PASSWORD
           valueFrom:
             secretKeyRef:
               key: admin-password
-              name: kube-prometheus-stack-grafana
+              name: grafana-admin
         - name: REQ_URL
           value: http://localhost:3000/api/admin/provisioning/datasources/reload
         - name: REQ_METHOD
@@ -120,12 +119,12 @@ spec:
           valueFrom:
             secretKeyRef:
               key: admin-user
-              name: kube-prometheus-stack-grafana
+              name: grafana-admin
         - name: GF_SECURITY_ADMIN_PASSWORD
           valueFrom:
             secretKeyRef:
               key: admin-password
-              name: kube-prometheus-stack-grafana
+              name: grafana-admin
         - name: GF_PATHS_DATA
           value: /var/lib/grafana/
         - name: GF_PATHS_LOGS

@@ -35,6 +35,7 @@ data:
           chunks_directory: /var/loki/chunks
           rules_directory: /var/loki/rules
     compactor:
+      delete_request_store: filesystem
       retention_enabled: true
     frontend:
       scheduler_address: ""

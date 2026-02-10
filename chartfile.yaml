@@ -10,6 +10,8 @@ repositories:
     url: https://prometheus-community.github.io/helm-charts
   - name: grafana
     url: https://grafana.github.io/helm-charts
+  - name: sealed-secrets
+    url: https://bitnami-labs.github.io/sealed-secrets
 
 requires:
   - chart: nfs-subdir-external-provisioner/nfs-subdir-external-provisioner
@@ -26,3 +28,5 @@ requires:
     version: "1.24.4"
   - chart: grafana/alloy
     version: "1.6.0"
+  - chart: sealed-secrets/sealed-secrets
+    version: "2.18.0"

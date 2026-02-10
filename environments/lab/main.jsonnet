@@ -249,6 +249,21 @@ local withNamespace(resources, ns) = {
     },
   },
 
+  // Sealed Secrets controller for encrypted secrets in git
+  sealedSecrets: {
+    local ns = 'sealed-secrets',
+
+    namespace: k.core.v1.namespace.new(ns),
+
+    resources: withNamespace(
+      helm.template('sealed-secrets', '../../charts/sealed-secrets', {
+        namespace: ns,
+        values: {},
+      }),
+      ns
+    ),
+  },
+
   // Observability stack: Prometheus, Grafana, Loki, Tempo, Alloy
   monitoring: {
     local ns = 'monitoring',
@@ -296,6 +311,11 @@ local withNamespace(resources, ns) = {
             },
           },
           grafana: {
+            admin: {
+              existingSecret: 'grafana-admin',
+              userKey: 'admin-user',
+              passwordKey: 'admin-password',
+            },
             persistence: {
               enabled: true,
               storageClassName: 'nfs',
@@ -356,6 +376,7 @@ local withNamespace(resources, ns) = {
             },
             compactor: {
               retention_enabled: true,
+              delete_request_store: 'filesystem',
             },
           },
           singleBinary: {
