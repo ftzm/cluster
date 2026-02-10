@@ -164,6 +164,7 @@ local withNamespace(resources, ns) = {
               expose: { default: false },
             },
             metrics: {
+              port: 9091,  // Changed from 9100 to avoid conflict with node-exporter
               expose: { default: false },
             },
           },
@@ -190,6 +191,27 @@ local withNamespace(resources, ns) = {
       }),
       ns
     ),
+
+    // PodMonitor for Prometheus to scrape Traefik metrics
+    podMonitor: {
+      apiVersion: 'monitoring.coreos.com/v1',
+      kind: 'PodMonitor',
+      metadata: {
+        name: 'traefik',
+        namespace: ns,
+      },
+      spec: {
+        selector: {
+          matchLabels: {
+            'app.kubernetes.io/name': 'traefik',
+          },
+        },
+        podMetricsEndpoints: [{
+          port: 'metrics',
+          path: '/metrics',
+        }],
+      },
+    },
   },
 
   // ArgoCD - GitOps continuous delivery

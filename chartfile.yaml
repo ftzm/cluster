@@ -10,6 +10,8 @@ repositories:
     url: https://prometheus-community.github.io/helm-charts
   - name: grafana
     url: https://grafana.github.io/helm-charts
+  - name: grafana-community
+    url: https://grafana-community.github.io/helm-charts
   - name: sealed-secrets
     url: https://bitnami-labs.github.io/sealed-secrets
 
@@ -24,8 +26,8 @@ requires:
     version: "81.5.2"
   - chart: grafana/loki
     version: "6.52.0"
-  - chart: grafana/tempo
-    version: "1.24.4"
+  - chart: grafana-community/tempo
+    version: "1.26.1"
   - chart: grafana/alloy
     version: "1.6.0"
   - chart: sealed-secrets/sealed-secrets
