@@ -532,7 +532,7 @@ local withNamespace(resources, ns) = {
                 loki.process "default" {
                   forward_to = [loki.write.default.receiver]
 
-                  // Try to parse as JSON (silently ignored if not JSON)
+                  // Extract JSON fields (silently ignored if not JSON)
                   stage.json {
                     expressions = {
                       level   = "level",
@@ -541,9 +541,16 @@ local withNamespace(resources, ns) = {
                     }
                   }
 
+                  // Normalize level to lowercase
+                  stage.template {
+                    source   = "level"
+                    template = "{{ "{{" }} ToLower .Value {{ "}}" }}"
+                  }
+
                   // Only promote level to label if it's a standard value
+                  // Selector requires a label match, so we use namespace which is always set
                   stage.match {
-                    selector = "{} |~ \"\\\"level\\\":\\\"(error|warn|info|debug)\\\"\""
+                    selector = "{namespace=~\".+\"} |~ \"\\\"level\\\"\\s*:\\s*\\\"(error|warn|info|debug|ERROR|WARN|INFO|DEBUG)\\\"\""
                     stage.labels {
                       values = { level = "" }
                     }
