@@ -319,6 +319,8 @@ local withNamespace(resources, ns) = {
           },
           alertmanager: {
             alertmanagerSpec: {
+              useExistingSecret: true,
+              configSecret: 'alertmanager-config',
               storage: {
                 volumeClaimTemplate: {
                   spec: {
@@ -512,6 +514,12 @@ local withNamespace(resources, ns) = {
       }),
       ns
     ),
+
+    // Sealed secret for Alertmanager config
+    alertmanagerConfigSecret: (import 'alertmanager-config.sealed.jsonnet') + {
+      metadata+: { namespace: ns },
+      spec+: { template+: { metadata+: { namespace: ns } } },
+    },
 
     // Sealed secret for Grafana admin credentials
     grafanaAdminSecret: {

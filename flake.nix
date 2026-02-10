@@ -40,6 +40,7 @@
         sops
         age
         kubeseal
+        gitleaks
       ];
     };
   };
