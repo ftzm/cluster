@@ -248,4 +248,241 @@ local withNamespace(resources, ns) = {
       },
     },
   },
+
+  // Observability stack: Prometheus, Grafana, Loki, Tempo, Alloy
+  monitoring: {
+    local ns = 'monitoring',
+
+    namespace: k.core.v1.namespace.new(ns),
+
+    // kube-prometheus-stack: Prometheus + Grafana + Alertmanager
+    prometheusStack: withNamespace(
+      helm.template('kube-prometheus-stack', '../../charts/kube-prometheus-stack', {
+        namespace: ns,
+        values: {
+          prometheus: {
+            prometheusSpec: {
+              storageSpec: {
+                volumeClaimTemplate: {
+                  spec: {
+                    storageClassName: 'nfs',
+                    accessModes: ['ReadWriteOnce'],
+                    resources: {
+                      requests: { storage: '20Gi' },
+                    },
+                  },
+                },
+              },
+              retention: '30d',
+              retentionSize: '18GB',
+              // Discover all ServiceMonitors/PodMonitors, not just those with release label
+              podMonitorSelectorNilUsesHelmValues: false,
+              serviceMonitorSelectorNilUsesHelmValues: false,
+            },
+          },
+          alertmanager: {
+            alertmanagerSpec: {
+              storage: {
+                volumeClaimTemplate: {
+                  spec: {
+                    storageClassName: 'nfs',
+                    accessModes: ['ReadWriteOnce'],
+                    resources: {
+                      requests: { storage: '1Gi' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          grafana: {
+            persistence: {
+              enabled: true,
+              storageClassName: 'nfs',
+              size: '1Gi',
+            },
+            additionalDataSources: [
+              {
+                name: 'Loki',
+                type: 'loki',
+                url: 'http://loki-gateway.monitoring.svc.cluster.local:80',
+                access: 'proxy',
+              },
+              {
+                name: 'Tempo',
+                type: 'tempo',
+                uid: 'tempo',
+                url: 'http://tempo.monitoring.svc.cluster.local:3100',
+                access: 'proxy',
+              },
+            ],
+            ingress: { enabled: false },
+            sidecar: {
+              dashboards: { enabled: true, searchNamespace: 'ALL' },
+              datasources: { enabled: true },
+            },
+          },
+          // Disable components not accessible in homelab k8s
+          kubeEtcd: { enabled: false },
+          kubeControllerManager: { enabled: false },
+          kubeScheduler: { enabled: false },
+          kubeProxy: { enabled: false },
+        },
+      }),
+      ns
+    ),
+
+    // Loki: Log aggregation (monolithic mode)
+    loki: withNamespace(
+      helm.template('loki', '../../charts/loki', {
+        namespace: ns,
+        values: {
+          deploymentMode: 'SingleBinary',
+          loki: {
+            auth_enabled: false,
+            commonConfig: { replication_factor: 1 },
+            storage: { type: 'filesystem' },
+            schemaConfig: {
+              configs: [{
+                from: '2024-01-01',
+                store: 'tsdb',
+                object_store: 'filesystem',
+                schema: 'v13',
+                index: { prefix: 'index_', period: '24h' },
+              }],
+            },
+            limits_config: {
+              retention_period: '720h',
+            },
+            compactor: {
+              retention_enabled: true,
+            },
+          },
+          singleBinary: {
+            replicas: 1,
+            persistence: {
+              enabled: true,
+              storageClass: 'nfs',
+              size: '20Gi',
+            },
+          },
+          backend: { replicas: 0 },
+          read: { replicas: 0 },
+          write: { replicas: 0 },
+          gateway: { enabled: true, replicas: 1 },
+          minio: { enabled: false },
+          test: { enabled: false },
+          lokiCanary: { enabled: false },
+        },
+      }),
+      ns
+    ),
+
+    // Tempo: Distributed tracing
+    tempo: withNamespace(
+      helm.template('tempo', '../../charts/tempo', {
+        namespace: ns,
+        values: {
+          tempo: {
+            retention: '336h',  // 14 days (Tempo recommended default)
+            receivers: {
+              otlp: {
+                protocols: {
+                  grpc: { endpoint: '0.0.0.0:4317' },
+                  http: { endpoint: '0.0.0.0:4318' },
+                },
+              },
+            },
+          },
+          persistence: {
+            enabled: true,
+            storageClassName: 'nfs',
+            size: '10Gi',
+          },
+        },
+      }),
+      ns
+    ),
+
+    // Alloy: Unified collector for logs and traces
+    alloy: withNamespace(
+      helm.template('alloy', '../../charts/alloy', {
+        namespace: ns,
+        values: {
+          alloy: {
+            configMap: {
+              content: |||
+                // Kubernetes pod log discovery
+                discovery.kubernetes "pods" {
+                  role = "pod"
+                }
+
+                // Collect logs from all pods
+                loki.source.kubernetes "pods" {
+                  targets    = discovery.kubernetes.pods.targets
+                  forward_to = [loki.write.default.receiver]
+                }
+
+                // Write logs to Loki
+                loki.write "default" {
+                  endpoint {
+                    url = "http://loki-gateway.monitoring.svc.cluster.local:80/loki/api/v1/push"
+                  }
+                }
+
+                // OTLP receiver for traces from instrumented apps
+                otelcol.receiver.otlp "default" {
+                  grpc { endpoint = "0.0.0.0:4317" }
+                  http { endpoint = "0.0.0.0:4318" }
+                  output {
+                    traces = [otelcol.processor.batch.default.input]
+                  }
+                }
+
+                // Batch processor for better performance
+                otelcol.processor.batch "default" {
+                  output {
+                    traces = [otelcol.exporter.otlp.tempo.input]
+                  }
+                }
+
+                // Export traces to Tempo
+                otelcol.exporter.otlp "tempo" {
+                  client {
+                    endpoint = "tempo.monitoring.svc.cluster.local:4317"
+                    tls { insecure = true }
+                  }
+                }
+              |||,
+            },
+          },
+          controller: { type: 'daemonset' },
+          serviceAccount: { create: true },
+          rbac: { create: true },
+        },
+      }),
+      ns
+    ),
+
+    // Traefik IngressRoute for Grafana (private/WireGuard only)
+    grafanaIngress: {
+      apiVersion: 'traefik.io/v1alpha1',
+      kind: 'IngressRoute',
+      metadata: {
+        name: 'grafana',
+        namespace: ns,
+      },
+      spec: {
+        entryPoints: ['privateweb', 'privatesecure'],
+        routes: [{
+          match: "Host(`grafana.ftzmlab.xyz`)",
+          kind: 'Rule',
+          services: [{
+            name: 'kube-prometheus-stack-grafana',
+            port: 80,
+          }],
+        }],
+      },
+    },
+  },
 }

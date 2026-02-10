@@ -36,7 +36,60 @@
             "- chart: argo/argo-cd\\s+version: \"?(?<currentValue>[^\"\\s]+)\"?"
          ],
          "registryUrlTemplate": "https://argoproj.github.io/argo-helm"
+      },
+      {
+         "customType": "regex",
+         "datasourceTemplate": "helm",
+         "depNameTemplate": "kube-prometheus-stack",
+         "managerFilePatterns": [
+            "/chartfile\\.yaml$/"
+         ],
+         "matchStrings": [
+            "- chart: prometheus-community/kube-prometheus-stack\\s+version: \"?(?<currentValue>[^\"\\s]+)\"?"
+         ],
+         "registryUrlTemplate": "https://prometheus-community.github.io/helm-charts"
+      },
+      {
+         "customType": "regex",
+         "datasourceTemplate": "helm",
+         "depNameTemplate": "loki",
+         "managerFilePatterns": [
+            "/chartfile\\.yaml$/"
+         ],
+         "matchStrings": [
+            "- chart: grafana/loki\\s+version: \"?(?<currentValue>[^\"\\s]+)\"?"
+         ],
+         "registryUrlTemplate": "https://grafana.github.io/helm-charts"
+      },
+      {
+         "customType": "regex",
+         "datasourceTemplate": "helm",
+         "depNameTemplate": "tempo",
+         "managerFilePatterns": [
+            "/chartfile\\.yaml$/"
+         ],
+         "matchStrings": [
+            "- chart: grafana/tempo\\s+version: \"?(?<currentValue>[^\"\\s]+)\"?"
+         ],
+         "registryUrlTemplate": "https://grafana.github.io/helm-charts"
+      },
+      {
+         "customType": "regex",
+         "datasourceTemplate": "helm",
+         "depNameTemplate": "alloy",
+         "managerFilePatterns": [
+            "/chartfile\\.yaml$/"
+         ],
+         "matchStrings": [
+            "- chart: grafana/alloy\\s+version: \"?(?<currentValue>[^\"\\s]+)\"?"
+         ],
+         "registryUrlTemplate": "https://grafana.github.io/helm-charts"
       }
+   ],
+   "enabledManagers": [
+      "custom.regex",
+      "github-actions",
+      "jsonnet-bundler"
    ],
    "extends": [
       "config:recommended"
