@@ -347,6 +347,12 @@ local withNamespace(resources, ns) = {
           kubeControllerManager: { enabled: false },
           kubeScheduler: { enabled: false },
           kubeProxy: { enabled: false },
+          // Fix node-exporter mount propagation issue
+          'prometheus-node-exporter': {
+            hostRootFsMount: {
+              enabled: false,
+            },
+          },
         },
       }),
       ns

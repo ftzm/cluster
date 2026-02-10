@@ -51,8 +51,6 @@ spec:
       - args:
         - --path.procfs=/host/proc
         - --path.sysfs=/host/sys
-        - --path.rootfs=/host/root
-        - --path.udev.data=/host/root/run/udev/data
         - --web.listen-address=[$(HOST_IP)]:9100
         - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/containerd/.+|var/lib/docker/.+|var/lib/kubelet/.+)($|/)
         - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|erofs)$
@@ -97,10 +95,6 @@ spec:
         - mountPath: /host/sys
           name: sys
           readOnly: true
-        - mountPath: /host/root
-          mountPropagation: HostToContainer
-          name: root
-          readOnly: true
       hostIPC: false
       hostNetwork: true
       hostPID: true
@@ -122,9 +116,6 @@ spec:
       - hostPath:
           path: /sys
         name: sys
-      - hostPath:
-          path: /
-        name: root
   updateStrategy:
     rollingUpdate:
       maxUnavailable: 1
