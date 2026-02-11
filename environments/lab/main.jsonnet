@@ -550,7 +550,7 @@ local withNamespace(resources, ns) = {
                   // Only promote level to label if it's a standard value
                   // Selector requires a label match, so we use namespace which is always set
                   stage.match {
-                    selector = "{namespace=~\".+\"} |~ \"\\\"level\\\"\\s*:\\s*\\\"(error|warn|info|debug|ERROR|WARN|INFO|DEBUG)\\\"\""
+                    selector = "{namespace=~\".+\"} |~ \"\\\"level\\\"\\\\s*:\\\\s*\\\"(error|warn|info|debug|ERROR|WARN|INFO|DEBUG)\\\"\""
                     stage.labels {
                       values = { level = "" }
                     }
