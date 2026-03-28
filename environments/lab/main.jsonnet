@@ -277,6 +277,29 @@ local withNamespace(resources, ns) = {
         },
       },
     },
+
+    // Traefik IngressRouteTCP for ArgoCD with TLS passthrough
+    ingressRoute: {
+      apiVersion: 'traefik.io/v1alpha1',
+      kind: 'IngressRouteTCP',
+      metadata: {
+        name: 'argocd',
+        namespace: ns,
+      },
+      spec: {
+        entryPoints: ['privatesecure'],
+        routes: [{
+          match: 'HostSNI(`argo.lan.ftzmlab.xyz`)',
+          services: [{
+            name: 'argocd-server',
+            port: 443,
+          }],
+        }],
+        tls: {
+          passthrough: true,
+        },
+      },
+    },
   },
 
   // Sealed Secrets controller for encrypted secrets in git
@@ -643,6 +666,121 @@ local withNamespace(resources, ns) = {
             name: 'kube-prometheus-stack-grafana',
             port: 80,
           }],
+        }],
+      },
+    },
+  },
+
+  // Blocky: Ad-blocking DNS proxy for Tailscale clients
+  blocky: {
+    local ns = 'blocky',
+    local labels = { 'app.kubernetes.io/name': 'blocky' },
+
+    namespace: k.core.v1.namespace.new(ns),
+
+    configmap: k.core.v1.configMap.new('blocky-config')
+      + k.core.v1.configMap.metadata.withNamespace(ns)
+      + k.core.v1.configMap.withData({
+        'config.yaml': |||
+          # Upstream DNS servers
+          upstreams:
+            groups:
+              default:
+                - 1.1.1.1
+                - 8.8.8.8
+                - 9.9.9.9
+
+          bootstrapDns:
+            - tcp+udp:1.1.1.1
+
+          # Ad-blocking
+          blocking:
+            denylists:
+              ads:
+                - https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+                - https://adaway.org/hosts.txt
+                - https://v.firebog.net/hosts/AdguardDNS.txt
+              malware:
+                - https://v.firebog.net/hosts/Prigent-Malware.txt
+            clientGroupsBlock:
+              default:
+                - ads
+                - malware
+            blockType: zeroIp
+            refreshPeriod: 24h
+
+          # Custom DNS mappings
+          customDNS:
+            mapping:
+              lan.ftzmlab.xyz: %(wireguardIP)s
+
+          # Forward cluster.local to CoreDNS
+          conditional:
+            mapping:
+              cluster.local: 10.96.0.10
+
+          caching:
+            minTime: 5m
+            maxTime: 30m
+            prefetching: true
+
+          ports:
+            dns: %(wireguardIP)s:53
+            http: 4000
+
+          log:
+            level: info
+
+          prometheus:
+            enable: true
+            path: /metrics
+        ||| % { wireguardIP: config.wireguardIP },
+      }),
+
+    deployment: k.apps.v1.deployment.new('blocky')
+      + k.apps.v1.deployment.metadata.withNamespace(ns)
+      + k.apps.v1.deployment.spec.withReplicas(1)
+      + k.apps.v1.deployment.spec.selector.withMatchLabels(labels)
+      + k.apps.v1.deployment.spec.template.metadata.withLabels(labels)
+      + k.apps.v1.deployment.spec.template.spec.withHostNetwork(true)
+      + k.apps.v1.deployment.spec.template.spec.withDnsPolicy('ClusterFirstWithHostNet')
+      + k.apps.v1.deployment.spec.template.spec.withNodeSelector({
+        'kubernetes.io/hostname': 'nuc',
+      })
+      + k.apps.v1.deployment.spec.template.spec.withContainers([
+        k.core.v1.container.new('blocky', 'spx01/blocky:latest')
+        + k.core.v1.container.withArgs(['--config', '/config/config.yaml'])
+        + k.core.v1.container.withPorts([
+          k.core.v1.containerPort.new(53) + k.core.v1.containerPort.withName('dns-udp') + k.core.v1.containerPort.withProtocol('UDP'),
+          k.core.v1.containerPort.new(53) + k.core.v1.containerPort.withName('dns-tcp') + k.core.v1.containerPort.withProtocol('TCP'),
+          k.core.v1.containerPort.newNamed(4000, 'http'),
+        ])
+        + k.core.v1.container.withVolumeMounts([
+          k.core.v1.volumeMount.new('config', '/config'),
+        ])
+        + k.core.v1.container.readinessProbe.httpGet.withPath('/api/blocking/status')
+        + k.core.v1.container.readinessProbe.httpGet.withPort(4000)
+        + k.core.v1.container.livenessProbe.httpGet.withPath('/api/blocking/status')
+        + k.core.v1.container.livenessProbe.httpGet.withPort(4000),
+      ])
+      + k.apps.v1.deployment.spec.template.spec.withVolumes([
+        k.core.v1.volume.fromConfigMap('config', 'blocky-config'),
+      ]),
+
+    podMonitor: {
+      apiVersion: 'monitoring.coreos.com/v1',
+      kind: 'PodMonitor',
+      metadata: {
+        name: 'blocky',
+        namespace: ns,
+      },
+      spec: {
+        selector: {
+          matchLabels: labels,
+        },
+        podMetricsEndpoints: [{
+          port: 'http',
+          path: '/metrics',
         }],
       },
     },
