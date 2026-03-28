@@ -31,7 +31,7 @@ data:
     # Custom DNS mappings
     customDNS:
       mapping:
-        lan.ftzmlab.xyz: 10.0.100.4
+        lan.ftzmlab.xyz: 100.64.0.2
 
     # Forward cluster.local to CoreDNS
     conditional:
@@ -44,7 +44,7 @@ data:
       prefetching: true
 
     ports:
-      dns: 10.0.100.4:53
+      dns: 100.64.0.2:53
       http: 4000
 
     log:

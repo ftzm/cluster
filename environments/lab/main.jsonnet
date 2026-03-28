@@ -149,6 +149,11 @@ local withNamespace(resources, ns) = {
             dnsPolicy: 'ClusterFirstWithHostNet',
           },
 
+          updateStrategy: {
+            type: 'Recreate',
+            rollingUpdate: null,
+          },
+
           // Ensure Traefik runs on the node with both IPs (public + WireGuard)
           nodeSelector: {
             'kubernetes.io/hostname': 'nuc',
@@ -184,8 +189,8 @@ local withNamespace(resources, ns) = {
             '--entrypoints.web.address=' + config.publicIP + ':9080',
             '--entrypoints.websecure.address=' + config.publicIP + ':9443',
             // Private entrypoints (bind to WireGuard IP)
-            '--entrypoints.privateweb.address=' + config.wireguardIP + ':9080',
-            '--entrypoints.privatesecure.address=' + config.wireguardIP + ':9443',
+            '--entrypoints.privateweb.address=' + config.tailscaleIP + ':9080',
+            '--entrypoints.privatesecure.address=' + config.tailscaleIP + ':9443',
           ],
 
           // Single IngressClass for standard Ingress resources
@@ -734,13 +739,14 @@ local withNamespace(resources, ns) = {
           prometheus:
             enable: true
             path: /metrics
-        ||| % { wireguardIP: config.wireguardIP },
+        ||| % { wireguardIP: config.tailscaleIP },
       }),
 
     deployment: k.apps.v1.deployment.new('blocky')
       + k.apps.v1.deployment.metadata.withNamespace(ns)
       + k.apps.v1.deployment.spec.withReplicas(1)
       + k.apps.v1.deployment.spec.selector.withMatchLabels(labels)
+      + k.apps.v1.deployment.spec.strategy.withType('Recreate')
       + k.apps.v1.deployment.spec.template.metadata.withLabels(labels)
       + k.apps.v1.deployment.spec.template.spec.withHostNetwork(true)
       + k.apps.v1.deployment.spec.template.spec.withDnsPolicy('ClusterFirstWithHostNet')

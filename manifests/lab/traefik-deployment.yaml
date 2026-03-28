@@ -16,10 +16,7 @@ spec:
       app.kubernetes.io/instance: traefik-traefik
       app.kubernetes.io/name: traefik
   strategy:
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
-    type: RollingUpdate
+    type: Recreate
   template:
     metadata:
       annotations:
@@ -55,8 +52,8 @@ spec:
         - --accesslog.fields.headers.defaultmode=drop
         - --entrypoints.web.address=192.168.1.4:9080
         - --entrypoints.websecure.address=192.168.1.4:9443
-        - --entrypoints.privateweb.address=10.0.100.4:9080
-        - --entrypoints.privatesecure.address=10.0.100.4:9443
+        - --entrypoints.privateweb.address=100.64.0.2:9080
+        - --entrypoints.privatesecure.address=100.64.0.2:9443
         env:
         - name: POD_NAME
           valueFrom:
