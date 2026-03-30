@@ -192,14 +192,6 @@ local withNamespace(resources, ns) = {
             '--entrypoints.privatesecure.address=' + config.tailscaleIP + ':443',
           ],
 
-          securityContext: {
-            capabilities: {
-              add: ['NET_BIND_SERVICE'],
-              drop: ['ALL'],
-            },
-            readOnlyRootFilesystem: true,
-            allowPrivilegeEscalation: true,
-          },
 
           // Single IngressClass for standard Ingress resources
           // Note: Standard Ingress resources will be available on ALL entrypoints.

@@ -104,10 +104,8 @@ spec:
           timeoutSeconds: 2
         resources: null
         securityContext:
-          allowPrivilegeEscalation: true
+          allowPrivilegeEscalation: false
           capabilities:
-            add:
-            - NET_BIND_SERVICE
             drop:
             - ALL
           readOnlyRootFilesystem: true
