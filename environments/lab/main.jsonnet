@@ -902,6 +902,7 @@ local withNamespace(resources, ns) = {
             port: 80,
           }],
         }],
+        tls: {},
       },
     },
   },
