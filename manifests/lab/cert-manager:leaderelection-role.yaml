@@ -10,7 +10,7 @@ metadata:
     app.kubernetes.io/version: v1.17.2
     helm.sh/chart: cert-manager-v1.17.2
   name: cert-manager:leaderelection
-  namespace: cert-manager
+  namespace: kube-system
 rules:
 - apiGroups:
   - coordination.k8s.io

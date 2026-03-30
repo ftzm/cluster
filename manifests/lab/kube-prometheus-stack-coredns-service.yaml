@@ -12,7 +12,7 @@ metadata:
     jobLabel: coredns
     release: kube-prometheus-stack
   name: kube-prometheus-stack-coredns
-  namespace: monitoring
+  namespace: kube-system
 spec:
   clusterIP: None
   ports:

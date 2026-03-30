@@ -18,6 +18,9 @@ local withNamespace(resources, ns) = {
   [key]: resources[key] + (
     if std.member(clusterScoped, resources[key].kind)
     then {}
+    // Preserve namespace if the chart explicitly set a different one
+    else if std.objectHas(resources[key].metadata, 'namespace') && resources[key].metadata.namespace != ns
+    then {}
     else { metadata+: { namespace: ns } }
   )
   for key in std.objectFields(resources)
