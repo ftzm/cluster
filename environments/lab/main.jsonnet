@@ -183,15 +183,23 @@ local withNamespace(resources, ns) = {
           },
 
           // Define entrypoints with specific IP bindings
-          // Using non-privileged ports since nginx handles 80/443 on the host
           additionalArguments: [
             // Public entrypoints (bind to LAN IP)
             '--entrypoints.web.address=' + config.publicIP + ':9080',
             '--entrypoints.websecure.address=' + config.publicIP + ':9443',
-            // Private entrypoints (bind to WireGuard IP)
-            '--entrypoints.privateweb.address=' + config.tailscaleIP + ':9080',
-            '--entrypoints.privatesecure.address=' + config.tailscaleIP + ':9443',
+            // Private entrypoints (bind to Tailscale IP on standard ports)
+            '--entrypoints.privateweb.address=' + config.tailscaleIP + ':80',
+            '--entrypoints.privatesecure.address=' + config.tailscaleIP + ':443',
           ],
+
+          securityContext: {
+            capabilities: {
+              add: ['NET_BIND_SERVICE'],
+              drop: ['ALL'],
+            },
+            readOnlyRootFilesystem: true,
+            allowPrivilegeEscalation: false,
+          },
 
           // Single IngressClass for standard Ingress resources
           // Note: Standard Ingress resources will be available on ALL entrypoints.

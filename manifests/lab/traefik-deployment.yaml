@@ -52,8 +52,8 @@ spec:
         - --accesslog.fields.headers.defaultmode=drop
         - --entrypoints.web.address=192.168.1.4:9080
         - --entrypoints.websecure.address=192.168.1.4:9443
-        - --entrypoints.privateweb.address=100.64.0.2:9080
-        - --entrypoints.privatesecure.address=100.64.0.2:9443
+        - --entrypoints.privateweb.address=100.64.0.2:80
+        - --entrypoints.privatesecure.address=100.64.0.2:443
         env:
         - name: POD_NAME
           valueFrom:
@@ -106,6 +106,8 @@ spec:
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
+            add:
+            - NET_BIND_SERVICE
             drop:
             - ALL
           readOnlyRootFilesystem: true
