@@ -354,9 +354,56 @@ local withNamespace(resources, ns) = {
             },
           },
           alertmanager: {
+            config: {
+              global: {
+                resolve_timeout: '5m',
+              },
+              inhibit_rules: [
+                {
+                  equal: ['namespace', 'alertname'],
+                  source_matchers: ['severity = critical'],
+                  target_matchers: ['severity =~ warning|info'],
+                },
+                {
+                  equal: ['namespace', 'alertname'],
+                  source_matchers: ['severity = warning'],
+                  target_matchers: ['severity = info'],
+                },
+                {
+                  equal: ['namespace'],
+                  source_matchers: ['alertname = InfoInhibitor'],
+                  target_matchers: ['severity = info'],
+                },
+                {
+                  target_matchers: ['alertname = InfoInhibitor'],
+                },
+              ],
+              receivers: [
+                { name: 'null' },
+                {
+                  name: 'ntfy',
+                  webhook_configs: [{
+                    url: 'http://ntfy.ntfy.svc.cluster.local/alerts',
+                    send_resolved: true,
+                  }],
+                },
+              ],
+              route: {
+                group_by: ['namespace'],
+                group_interval: '5m',
+                group_wait: '30s',
+                receiver: 'ntfy',
+                repeat_interval: '12h',
+                routes: [
+                  {
+                    matchers: ['alertname = "Watchdog"'],
+                    receiver: 'null',
+                  },
+                ],
+              },
+              templates: ['/etc/alertmanager/config/*.tmpl'],
+            },
             alertmanagerSpec: {
-              useExistingSecret: true,
-              configSecret: 'alertmanager-config',
               storage: {
                 volumeClaimTemplate: {
                   spec: {
@@ -626,12 +673,6 @@ local withNamespace(resources, ns) = {
       ns
     ),
 
-    // Sealed secret for Alertmanager config
-    alertmanagerConfigSecret: (import 'alertmanager-config.sealed.jsonnet') + {
-      metadata+: { namespace: ns },
-      spec+: { template+: { metadata+: { namespace: ns } } },
-    },
-
     // Sealed secret for Grafana admin credentials
     grafanaAdminSecret: {
       apiVersion: 'bitnami.com/v1alpha1',
@@ -787,6 +828,79 @@ local withNamespace(resources, ns) = {
         podMetricsEndpoints: [{
           port: 'http',
           path: '/metrics',
+        }],
+      },
+    },
+  },
+
+  // ntfy: Self-hosted push notification service
+  ntfy: {
+    local ns = 'ntfy',
+    local labels = { 'app.kubernetes.io/name': 'ntfy' },
+
+    namespace: k.core.v1.namespace.new(ns),
+
+    configmap: k.core.v1.configMap.new('ntfy-config')
+      + k.core.v1.configMap.metadata.withNamespace(ns)
+      + k.core.v1.configMap.withData({
+        'server.yml': |||
+          base-url: "https://ntfy.lan.ftzmlab.xyz"
+          listen-http: ":80"
+          cache-file: "/var/cache/ntfy/cache.db"
+          cache-duration: "12h"
+          auth-default-access: "read-write"
+        |||,
+      }),
+
+    pvc: k.core.v1.persistentVolumeClaim.new('ntfy-cache')
+      + k.core.v1.persistentVolumeClaim.metadata.withNamespace(ns)
+      + k.core.v1.persistentVolumeClaim.spec.withAccessModes(['ReadWriteOnce'])
+      + k.core.v1.persistentVolumeClaim.spec.resources.withRequests({ storage: '1Gi' })
+      + k.core.v1.persistentVolumeClaim.spec.withStorageClassName('nfs'),
+
+    deployment: k.apps.v1.deployment.new('ntfy')
+      + k.apps.v1.deployment.metadata.withNamespace(ns)
+      + k.apps.v1.deployment.spec.withReplicas(1)
+      + k.apps.v1.deployment.spec.selector.withMatchLabels(labels)
+      + k.apps.v1.deployment.spec.strategy.withType('Recreate')
+      + k.apps.v1.deployment.spec.template.metadata.withLabels(labels)
+      + k.apps.v1.deployment.spec.template.spec.withContainers([
+        k.core.v1.container.new('ntfy', 'binwiederhier/ntfy')
+        + k.core.v1.container.withArgs(['serve'])
+        + k.core.v1.container.withPorts([
+          k.core.v1.containerPort.newNamed(80, 'http'),
+        ])
+        + k.core.v1.container.withVolumeMounts([
+          k.core.v1.volumeMount.new('config', '/etc/ntfy'),
+          k.core.v1.volumeMount.new('cache', '/var/cache/ntfy'),
+        ]),
+      ])
+      + k.apps.v1.deployment.spec.template.spec.withVolumes([
+        k.core.v1.volume.fromConfigMap('config', 'ntfy-config'),
+        k.core.v1.volume.fromPersistentVolumeClaim('cache', 'ntfy-cache'),
+      ]),
+
+    service: k.core.v1.service.new('ntfy', labels, [
+      k.core.v1.servicePort.new(80, 80),
+    ])
+    + k.core.v1.service.metadata.withNamespace(ns),
+
+    ingressRoute: {
+      apiVersion: 'traefik.io/v1alpha1',
+      kind: 'IngressRoute',
+      metadata: {
+        name: 'ntfy',
+        namespace: ns,
+      },
+      spec: {
+        entryPoints: ['privateweb', 'privatesecure'],
+        routes: [{
+          match: "Host(`ntfy.lan.ftzmlab.xyz`)",
+          kind: 'Rule',
+          services: [{
+            name: 'ntfy',
+            port: 80,
+          }],
         }],
       },
     },
