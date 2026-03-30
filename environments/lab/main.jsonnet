@@ -198,7 +198,7 @@ local withNamespace(resources, ns) = {
               drop: ['ALL'],
             },
             readOnlyRootFilesystem: true,
-            allowPrivilegeEscalation: false,
+            allowPrivilegeEscalation: true,
           },
 
           // Single IngressClass for standard Ingress resources
