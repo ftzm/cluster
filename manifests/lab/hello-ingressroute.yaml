@@ -9,7 +9,7 @@ spec:
   - privatesecure
   routes:
   - kind: Rule
-    match: Host(`hello.ftzmlab.xyz`)
+    match: Host(`hello.lan.ftzmlab.xyz`)
     services:
     - name: hello
       port: 80

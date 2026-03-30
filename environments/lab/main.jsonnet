@@ -107,7 +107,7 @@ local withNamespace(resources, ns) = {
         entryPoints: ['privateweb', 'privatesecure'],
         routes: [
           {
-            match: "Host(`hello.ftzmlab.xyz`)",
+            match: "Host(`hello.lan.ftzmlab.xyz`)",
             kind: 'Rule',
             services: [
               {
@@ -665,7 +665,7 @@ local withNamespace(resources, ns) = {
       spec: {
         entryPoints: ['privateweb', 'privatesecure'],
         routes: [{
-          match: "Host(`grafana.ftzmlab.xyz`)",
+          match: "Host(`grafana.lan.ftzmlab.xyz`)",
           kind: 'Rule',
           services: [{
             name: 'kube-prometheus-stack-grafana',

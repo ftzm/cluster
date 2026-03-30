@@ -9,7 +9,7 @@ spec:
   - privatesecure
   routes:
   - kind: Rule
-    match: Host(`grafana.ftzmlab.xyz`)
+    match: Host(`grafana.lan.ftzmlab.xyz`)
     services:
     - name: kube-prometheus-stack-grafana
       port: 80
