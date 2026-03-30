@@ -14,6 +14,10 @@ repositories:
     url: https://grafana-community.github.io/helm-charts
   - name: sealed-secrets
     url: https://bitnami-labs.github.io/sealed-secrets
+  - name: jetstack
+    url: https://charts.jetstack.io
+  - name: sops-secrets-operator
+    url: https://isindir.github.io/sops-secrets-operator/
 
 requires:
   - chart: nfs-subdir-external-provisioner/nfs-subdir-external-provisioner
@@ -32,3 +36,7 @@ requires:
     version: "1.6.0"
   - chart: sealed-secrets/sealed-secrets
     version: "2.18.0"
+  - chart: jetstack/cert-manager
+    version: "1.17.2"
+  - chart: sops-secrets-operator/sops-secrets-operator
+    version: "0.25.3"

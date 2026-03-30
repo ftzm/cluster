@@ -225,6 +225,42 @@ local withNamespace(resources, ns) = {
         }],
       },
     },
+
+    // Wildcard certificate for *.lan.ftzmlab.xyz (in traefik namespace so Traefik can read it)
+    wildcardCert: {
+      apiVersion: 'cert-manager.io/v1',
+      kind: 'Certificate',
+      metadata: {
+        name: 'lan-wildcard',
+        namespace: ns,
+      },
+      spec: {
+        secretName: 'lan-wildcard-tls',
+        issuerRef: {
+          name: 'letsencrypt',
+          kind: 'ClusterIssuer',
+        },
+        dnsNames: [
+          '*.lan.ftzmlab.xyz',
+          'lan.ftzmlab.xyz',
+        ],
+      },
+    },
+
+    // Default TLS store so all IngressRoutes use the wildcard cert
+    defaultTlsStore: {
+      apiVersion: 'traefik.io/v1alpha1',
+      kind: 'TLSStore',
+      metadata: {
+        name: 'default',
+        namespace: ns,
+      },
+      spec: {
+        defaultCertificate: {
+          secretName: 'lan-wildcard-tls',
+        },
+      },
+    },
   },
 
   // ArgoCD - GitOps continuous delivery
@@ -320,6 +356,80 @@ local withNamespace(resources, ns) = {
       }),
       ns
     ),
+  },
+
+  // SOPS Secrets Operator: decrypts SopsSecret CRDs in-cluster using age
+  sopsOperator: {
+    local ns = 'sops-operator',
+
+    namespace: k.core.v1.namespace.new(ns),
+
+    resources: withNamespace(
+      helm.template('sops-secrets-operator', '../../charts/sops-secrets-operator', {
+        namespace: ns,
+        values: {
+          secretsAsFiles: [{
+            name: 'sops-age-key',
+            mountPath: '/mnt/age/',
+            secretName: 'sops-age-key',
+          }],
+          extraEnv: [{
+            name: 'SOPS_AGE_KEY_FILE',
+            value: '/mnt/age/key',
+          }],
+        },
+      }),
+      ns
+    ),
+  },
+
+  // cert-manager: TLS certificate management with Let's Encrypt
+  certManager: {
+    local ns = 'cert-manager',
+
+    namespace: k.core.v1.namespace.new(ns),
+
+    resources: withNamespace(
+      helm.template('cert-manager', '../../charts/cert-manager', {
+        namespace: ns,
+        values: {
+          crds: { enabled: true },
+        },
+      }),
+      ns
+    ),
+
+    // Cloudflare API token: environments/lab/secrets/cloudflare-api-token.enc.yaml
+    // (SOPS-encrypted, copied to manifests/ during render, decrypted in-cluster by sops-secrets-operator)
+
+    // ClusterIssuer for Let's Encrypt using Cloudflare DNS-01
+    clusterIssuer: {
+      apiVersion: 'cert-manager.io/v1',
+      kind: 'ClusterIssuer',
+      metadata: {
+        name: 'letsencrypt',
+      },
+      spec: {
+        acme: {
+          server: 'https://acme-v02.api.letsencrypt.org/directory',
+          email: 'm@ftzm.org',
+          privateKeySecretRef: {
+            name: 'letsencrypt-account-key',
+          },
+          solvers: [{
+            dns01: {
+              cloudflare: {
+                apiTokenSecretRef: {
+                  name: 'cloudflare-api-token',
+                  key: 'api-token',
+                },
+              },
+            },
+          }],
+        },
+      },
+    },
+
   },
 
   // Observability stack: Prometheus, Grafana, Loki, Tempo, Alloy
