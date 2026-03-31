@@ -496,7 +496,7 @@ local withNamespace(resources, ns) = {
                 {
                   name: 'ntfy',
                   webhook_configs: [{
-                    url: 'http://ntfy.ntfy.svc.cluster.local/alerts',
+                    url: 'http://ntfy-alertmanager.ntfy.svc.cluster.local:8080',
                     send_resolved: true,
                   }],
                 },
@@ -1018,5 +1018,75 @@ local withNamespace(resources, ns) = {
         tls: {},
       },
     },
+  },
+
+  // ntfy-alertmanager: Bridge that formats Alertmanager webhooks into
+  // human-readable ntfy notifications.
+  ntfyAlertmanager: {
+    local ns = 'ntfy',
+    local labels = { 'app.kubernetes.io/name': 'ntfy-alertmanager' },
+
+    configmap: k.core.v1.configMap.new('ntfy-alertmanager-config')
+      + k.core.v1.configMap.metadata.withNamespace(ns)
+      + k.core.v1.configMap.withData({
+        config: |||
+          http-address :8080
+          log-level info
+          alert-mode single
+
+          labels {
+              order "severity"
+
+              severity "critical" {
+                  priority 5
+                  tags "rotating_light"
+              }
+              severity "warning" {
+                  priority 3
+                  tags "warning"
+              }
+              severity "info" {
+                  priority 1
+                  tags "information_source"
+              }
+          }
+
+          resolved {
+              tags "white_check_mark"
+          }
+
+          ntfy {
+              topic http://ntfy.ntfy.svc.cluster.local/alerts
+          }
+
+          alertmanager {
+              silence-duration 24h
+              url http://kube-prometheus-stack-alertmanager.monitoring.svc.cluster.local:9093
+          }
+        |||,
+      }),
+
+    deployment: k.apps.v1.deployment.new('ntfy-alertmanager')
+      + k.apps.v1.deployment.metadata.withNamespace(ns)
+      + k.apps.v1.deployment.spec.withReplicas(1)
+      + k.apps.v1.deployment.spec.selector.withMatchLabels(labels)
+      + k.apps.v1.deployment.spec.template.metadata.withLabels(labels)
+      + k.apps.v1.deployment.spec.template.spec.withContainers([
+        k.core.v1.container.new('ntfy-alertmanager', 'xenrox/ntfy-alertmanager:latest')
+        + k.core.v1.container.withPorts([
+          k.core.v1.containerPort.newNamed(8080, 'http'),
+        ])
+        + k.core.v1.container.withVolumeMounts([
+          k.core.v1.volumeMount.new('config', '/etc/ntfy-alertmanager'),
+        ]),
+      ])
+      + k.apps.v1.deployment.spec.template.spec.withVolumes([
+        k.core.v1.volume.fromConfigMap('config', 'ntfy-alertmanager-config'),
+      ]),
+
+    service: k.core.v1.service.new('ntfy-alertmanager', labels, [
+      k.core.v1.servicePort.new(8080, 8080),
+    ])
+    + k.core.v1.service.metadata.withNamespace(ns),
   },
 }
