@@ -14,6 +14,7 @@ syncs to the cluster.
 - [Tanka and Jsonnet](#tanka-and-jsonnet)
 - [Helm Chart Vendoring](#helm-chart-vendoring)
 - [Justfile Commands](#justfile-commands)
+- [Making Changes](#making-changes)
 - [Networking and Routing](#networking-and-routing)
 - [Secrets Management](#secrets-management)
 - [Cluster Utilities](#cluster-utilities)
@@ -180,6 +181,158 @@ Custom logic and configuration is defined in Jsonnet, not in the charts themselv
 
 The render step produces flat YAML files named `{name}-{kind}.yaml` under
 `manifests/lab/`, which is the directory ArgoCD watches.
+
+---
+
+## Making Changes
+
+### Key concepts
+
+`environments/lab/main.jsonnet` is the primary file where cluster resources are defined. Other files are involved depending on the change — `chartfile.yaml` for adding Helm charts, `lib/config.libsonnet` for shared constants, `environments/lab/secrets/` for encrypted secrets.
+
+The top of `main.jsonnet` establishes the imports and helpers used throughout:
+
+```jsonnet
+local config = import '../../lib/config.libsonnet';
+local helm = (import 'tanka-util/helm.libsonnet').new(std.thisFile);
+local k = import 'k8s-libsonnet/main.libsonnet';
+```
+
+- `k` — typed Kubernetes object constructors (`k.core.v1.namespace.new(...)`, `k.apps.v1.deployment.new(...)`, etc.)
+- `helm` — provides `helm.template()` for rendering vendored Helm charts into Jsonnet objects
+- `config` — shared constants from `lib/config.libsonnet` (IP addresses)
+
+The `withNamespace(resources, ns)` helper is defined at the top of the file. It adds namespace metadata to all namespaced resources from Helm output while skipping cluster-scoped kinds (ClusterRole, CRD, etc.) and preserving explicit namespace overrides.
+
+### After every change
+
+Every change to `main.jsonnet` requires rendering and committing:
+
+1. Run `just render-lab` to regenerate the YAML manifests in `manifests/lab/`.
+2. Commit **both** the Jsonnet source changes and the rendered manifests.
+3. Push — ArgoCD will detect the new manifests and sync automatically.
+
+Forgetting to render or forgetting to commit the rendered output will cause the cluster state to diverge from the Jsonnet source.
+
+### Adding a Helm-based service
+
+If the chart is not yet vendored, add it to `chartfile.yaml` and run `tk tool charts vendor`.
+
+Then add a service block to `main.jsonnet`:
+
+```jsonnet
+myService: {
+  local ns = 'my-service',
+
+  namespace: k.core.v1.namespace.new(ns),
+
+  resources: withNamespace(
+    helm.template('my-service', '../../charts/my-chart', {
+      namespace: ns,
+      values: {
+        // Helm values as a Jsonnet object
+        replicaCount: 1,
+        image: { repository: 'example/app', tag: 'latest' },
+      },
+    }),
+    ns
+  ),
+},
+```
+
+### Adding a raw (non-Helm) service
+
+For services defined entirely with `k8s-libsonnet`:
+
+```jsonnet
+myApp: {
+  local ns = 'my-app',
+  local labels = { app: 'my-app' },
+
+  namespace: k.core.v1.namespace.new(ns),
+
+  deployment: k.apps.v1.deployment.new('my-app')
+    + k.apps.v1.deployment.metadata.withNamespace(ns)
+    + k.apps.v1.deployment.spec.withReplicas(1)
+    + k.apps.v1.deployment.spec.selector.withMatchLabels(labels)
+    + k.apps.v1.deployment.spec.template.metadata.withLabels(labels)
+    + k.apps.v1.deployment.spec.template.spec.withContainers([
+      k.core.v1.container.new('my-app', 'image:tag')
+      + k.core.v1.container.withPorts([
+        k.core.v1.containerPort.newNamed(80, 'http'),
+      ]),
+    ]),
+
+  service: k.core.v1.service.new('my-app', labels, [
+    k.core.v1.servicePort.new(80, 80),
+  ])
+  + k.core.v1.service.metadata.withNamespace(ns),
+},
+```
+
+### Adding an IngressRoute
+
+Traefik IngressRoutes are defined as raw Jsonnet objects (not from a Helm chart). Add one inside a service block to expose it:
+
+```jsonnet
+ingressRoute: {
+  apiVersion: 'traefik.io/v1alpha1',
+  kind: 'IngressRoute',
+  metadata: {
+    name: 'my-app',
+    namespace: ns,
+  },
+  spec: {
+    entryPoints: ['privateweb', 'privatesecure'],
+    routes: [{
+      match: "Host(`my-app.lan.ftzmlab.xyz`)",
+      kind: 'Rule',
+      services: [{
+        name: 'my-app',
+        port: 80,
+      }],
+    }],
+    tls: {},
+  },
+},
+```
+
+Use `entryPoints: ['privateweb', 'privatesecure']` for Tailscale-only access, or `['web', 'websecure']` for public access. The wildcard TLS cert covers all `*.lan.ftzmlab.xyz` hostnames automatically — just include `tls: {}`.
+
+### Referencing secrets from services
+
+Secrets are created via SOPS or Sealed Secrets (see [Secrets Management](#secrets-management)) and then referenced by name in service definitions.
+
+**In Helm values** — use the chart's `existingSecret` pattern:
+
+```jsonnet
+values: {
+  admin: {
+    existingSecret: 'grafana-admin',
+    userKey: 'admin-user',
+    passwordKey: 'admin-password',
+  },
+},
+```
+
+**In raw k8s objects** — reference the secret by name in a volume mount, env var, or spec field:
+
+```jsonnet
+spec: {
+  acme: {
+    privateKeySecretRef: { name: 'letsencrypt-account-key' },
+    solvers: [{
+      dns01: {
+        cloudflare: {
+          apiTokenSecretRef: { name: 'cloudflare-api-token', key: 'api-token' },
+        },
+      },
+    }],
+  },
+},
+```
+
+The secret name must match what the SOPS/SealedSecret resource creates in-cluster.
 
 ---
 
