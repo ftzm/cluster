@@ -1,7 +1,6 @@
 # Cluster Documentation
 
-This repository defines a single-node Kubernetes (k3s) homelab cluster running
-on a machine called `nuc`. All infrastructure is declared as code using
+This repository defines a Kubernetes homelab cluster. All infrastructure is declared as code using
 [Grafana Tanka](https://tanka.dev/) (Jsonnet), with Helm charts vendored into
 the repo and rendered to static manifests that [ArgoCD](https://argo-cd.readthedocs.io/)
 syncs to the cluster.
