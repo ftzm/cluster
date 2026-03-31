@@ -26,16 +26,7 @@ syncs to the cluster.
 ## Development Environment
 
 The repo is bootstrapped with [Nix Flakes](https://nixos.wiki/wiki/Flakes).
-Running `nix develop` drops you into a shell with every tool needed:
-
-| Category | Tools |
-|---|---|
-| Kubernetes | `kubectl`, `kubernetes-helm`, `kustomize`, `k9s` |
-| Jsonnet | `jsonnet`, `go-jsonnet`, `jsonnet-bundler` (jb) |
-| IaC | `tanka` (tk) |
-| Utilities | `jq`, `yq-go`, `just`, `renovate` |
-| Secrets | `sops`, `age`, `kubeseal`, `gitleaks` |
-
+Running `nix develop` drops you into a shell with every tool needed.
 No global installs are required; the flake pins nixpkgs to ensure reproducibility.
 
 ---
@@ -169,35 +160,9 @@ Managed by `jsonnet-bundler` (`jb install` / `jb update`):
 ## Helm Chart Vendoring
 
 Charts are declared in `chartfile.yaml` and vendored into `charts/` using
-`tk tool charts vendor`. The full chart source is checked into git so that:
-
-- Builds are fully reproducible and offline-capable.
-- The exact chart version used is always visible in the repo.
-- Tanka can template charts locally without a Helm repo connection.
-
-### Current charts
-
-| Chart | Version | Purpose |
-|---|---|---|
-| nfs-subdir-external-provisioner | 4.0.18 | Dynamic NFS storage provisioning |
-| traefik | 39.0.0 | Ingress controller |
-| argo-cd | 9.4.1 | GitOps continuous delivery |
-| kube-prometheus-stack | 81.6.2 | Prometheus, Grafana, Alertmanager |
-| loki | 6.53.0 | Log aggregation |
-| tempo | 1.26.1 | Distributed tracing |
-| alloy | 1.6.0 | Observability collector (logs + traces) |
-| sealed-secrets | 2.18.0 | Encrypted secrets controller |
-| cert-manager | 1.17.2 | TLS certificate automation |
-| sops-secrets-operator | 0.25.3 | SOPS/age secret decryption |
-
-Charts are templated in Jsonnet like this:
-
-```jsonnet
-helm.template('traefik', '../../charts/traefik', {
-  namespace: 'traefik',
-  values: { ... },
-})
-```
+`tk tool charts vendor`. The full chart source is checked into git so that
+charts can be inspected locally — useful for researching available chart values.
+Custom logic and configuration is defined in Jsonnet, not in the charts themselves.
 
 ---
 
@@ -237,8 +202,6 @@ separate IPs, creating isolated public and private ingress paths:
 - Setting `entryPoints: ['privateweb', 'privatesecure']` makes a service reachable only over Tailscale.
 - To expose a service publicly, add `web` and `websecure` to the entrypoints list.
 
-Currently **all services are private-only** (Tailscale).
-
 ### DNS
 
 **Blocky** runs as a DNS proxy on the Tailscale IP (`100.64.0.2:53`):
@@ -255,12 +218,7 @@ Currently **all services are private-only** (Tailscale).
 
 ### Service hostnames
 
-| Hostname | Service |
-|---|---|
-| `hello.lan.ftzmlab.xyz` | Hello World test app |
-| `argo.lan.ftzmlab.xyz` | ArgoCD (TLS passthrough) |
-| `grafana.lan.ftzmlab.xyz` | Grafana dashboards |
-| `ntfy.lan.ftzmlab.xyz` | Push notification service |
+The `lan` subdomain (`*.lan.ftzmlab.xyz`) is used to distinguish private services and enable DNS resolution for them over the Tailscale VPN.
 
 ---
 
@@ -276,8 +234,6 @@ Used for secrets that need to be stored as encrypted files in git.
 - Encrypted files live in `environments/lab/secrets/` and are copied to `manifests/lab/` during rendering.
 - The **sops-secrets-operator** runs in-cluster, mounts the age private key, and decrypts `SopsSecret` CRDs into regular Kubernetes Secrets.
 
-Currently used for: Cloudflare API token (cert-manager DNS validation).
-
 ### Sealed Secrets
 
 Used for secrets created interactively.
@@ -285,11 +241,9 @@ Used for secrets created interactively.
 - `scripts/create-sealed-secret.sh` takes key-value pairs, creates a dry-run Secret, encrypts it with `kubeseal`, and outputs Jsonnet-ready `SealedSecret` resources.
 - The **sealed-secrets controller** runs in-cluster and decrypts `SealedSecret` CRDs.
 
-Currently used for: Grafana admin credentials.
-
 ### Secret scanning
 
-`gitleaks` is configured (`.gitleaks.toml`) to detect accidentally committed secrets, with allowlists for chart test fixtures.
+`gitleaks` is configured (`.gitleaks.toml`) to detect accidentally committed secrets, with allowlists for chart test fixtures. It should always be run before making any changes.
 
 ---
 
@@ -318,12 +272,6 @@ Currently used for: Grafana admin credentials.
 
 - `ClusterIssuer` named `letsencrypt` using ACME DNS-01 with Cloudflare.
 - Wildcard `Certificate` for `*.lan.ftzmlab.xyz` stored in the `traefik` namespace.
-
-### DNS — Blocky
-
-- Ad-blocking DNS proxy bound to the Tailscale IP.
-- Custom DNS mapping for `lan.ftzmlab.xyz` domain.
-- Conditional forwarding for `cluster.local` to CoreDNS.
 
 ---
 
