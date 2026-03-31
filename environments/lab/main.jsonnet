@@ -496,7 +496,7 @@ local withNamespace(resources, ns) = {
                 {
                   name: 'ntfy',
                   webhook_configs: [{
-                    url: 'http://ntfy.ntfy.svc.cluster.local/alerts',
+                    url: 'http://ntfy.ntfy.svc.cluster.local/alerts?template=alertmanager',
                     send_resolved: true,
                   }],
                 },
