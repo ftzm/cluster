@@ -451,6 +451,9 @@ All observability components live in the `monitoring` namespace.
 - Routes all alerts to **ntfy** (self-hosted push notifications) via webhook.
 - Watchdog alerts silenced.
 - Inhibition rules suppress lower-severity alerts when higher-severity ones fire.
+- Disabled alerts (via `defaultRules.disabled` in Helm values):
+  - **KubeMemoryOvercommit** — cluster is too small to tolerate node failure.
+  - **NodeNetworkTransmitErrs** — false positive from Tailscale's WireGuard interface (`wg0`), which doesn't populate standard Linux network error counters.
 
 ### Loki — Log Aggregation
 

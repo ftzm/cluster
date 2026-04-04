@@ -51,41 +51,6 @@ spec:
       for: 10m
       labels:
         severity: warning
-    - alert: KubeMemoryOvercommit
-      annotations:
-        description: Cluster {{ $labels.cluster }} has overcommitted memory resource
-          requests for Pods by {{ $value | humanize }} bytes and cannot tolerate node
-          failure.
-        runbook_url: https://runbooks.prometheus-operator.dev/runbooks/kubernetes/kubememoryovercommit
-        summary: Cluster has overcommitted memory resource requests.
-      expr: |-
-        # Non-HA clusters.
-        (
-          (
-            sum by (cluster) (namespace_memory:kube_pod_container_resource_requests:sum{})
-            -
-            sum by (cluster) (kube_node_status_allocatable{job="kube-state-metrics",resource="memory"}) > 0
-          )
-          and
-          count by (cluster) (max by (cluster, node) (kube_node_role{job="kube-state-metrics", role="control-plane"})) < 3
-        )
-        or
-        # HA clusters.
-        (
-          sum by (cluster) (namespace_memory:kube_pod_container_resource_requests:sum{})
-          -
-          (
-            # Skip clusters with only one allocatable node.
-            (
-              sum by (cluster) (kube_node_status_allocatable{job="kube-state-metrics",resource="memory"})
-              -
-              max by (cluster) (kube_node_status_allocatable{job="kube-state-metrics",resource="memory"})
-            ) > 0
-          ) > 0
-        )
-      for: 10m
-      labels:
-        severity: warning
     - alert: KubeCPUQuotaOvercommit
       annotations:
         description: Cluster {{ $labels.cluster }} has overcommitted CPU resource

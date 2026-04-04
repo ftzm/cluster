@@ -573,6 +573,19 @@ local withNamespace(resources, ns) = {
               enabled: false,
             },
           },
+          // Disabled alerts for homelab
+          // See values.yaml defaultRules.disabled for mechanism
+          defaultRules: {
+            disabled: {
+              // Cluster is too small to tolerate node failure.
+              KubeMemoryOvercommit: true,
+              // Tailscale creates a WireGuard interface (wg0) whose kernel module
+              // does not populate standard Linux network error/packet counters.
+              // node_exporter reads these bogus counters, producing +Inf error
+              // ratios (errors / 0 packets = +Inf). Not a real network issue.
+              NodeNetworkTransmitErrs: true,
+            },
+          },
         },
       }),
       ns
